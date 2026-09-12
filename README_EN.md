@@ -9,8 +9,8 @@
 </p>
 
 <p align="center">
-  <img alt="Release" src="https://img.shields.io/github/v/release/BigPizzaV3/CodexPlusPlus">
-  <img alt="Stars" src="https://img.shields.io/github/stars/BigPizzaV3/CodexPlusPlus">
+  <img alt="Release" src="https://img.shields.io/github/v/release/arnann/CodexPlusPlus">
+  <img alt="Stars" src="https://img.shields.io/github/stars/arnann/CodexPlusPlus">
   <img alt="License" src="https://img.shields.io/github/license/BigPizzaV3/CodexPlusPlus">
   <img alt="Rust" src="https://img.shields.io/badge/rust-1.85%2B-orange">
   <img alt="Tauri" src="https://img.shields.io/badge/tauri-2.x-24C8DB">
@@ -20,18 +20,16 @@ Codex++ is an external launcher and manager for the OpenAI Codex / ChatGPT deskt
 
 ## Quick Start
 
-Download the latest installer from [GitHub Releases](https://github.com/BigPizzaV3/CodexPlusPlus/releases):
+Download the latest Deepin package from [GitHub Releases](https://github.com/arnann/CodexPlusPlus/releases):
 
-- Windows: `CodexPlusPlus-*-windows-x64-setup.exe`
-- macOS Intel: `CodexPlusPlus-*-macos-x64.dmg`
-- macOS Apple Silicon: `CodexPlusPlus-*-macos-arm64.dmg`
+- Deepin / Debian amd64: `codex-plus-plus_*_amd64.deb`
 
 After installation, two entry points are available:
 
 - `Codex++`: silently starts the official desktop app with saved provider settings and enhancements.
 - `Codex++ Manager`: manages providers, models, tools, sessions, enhancements, scripts, updates, and diagnostics.
 
-For first-time setup, open the manager, verify the detected app path, configure a provider and optional enhancements, then launch through `Codex++`. The Windows installer creates Desktop and Start Menu shortcuts. The macOS DMG installs `/Applications/Codex++.app` and `/Applications/Codex++ 管理工具.app`.
+For first-time setup, open the manager, verify the detected app path, configure a provider and optional enhancements, then launch through `Codex++`. The Deepin package installs the launcher, manager, and desktop menu entries.
 
 ## Community and Support
 
@@ -88,7 +86,7 @@ Settings that depend on renderer injection generally require saving and restarti
 
 ## Updates and Packages
 
-Codex++ publishes installers through GitHub Releases. Windows builds an NSIS installer, while macOS builds separate Intel x64 and Apple Silicon arm64 DMGs.
+Codex++ publishes a Deepin / Debian amd64 package (`.deb`) through GitHub Releases. Pushes to `main` also produce a downloadable GitHub Actions artifact.
 
 The manager's About page can check and start updates. When the silent launcher finds a new version, it opens the manager directly on the update prompt.
 
@@ -154,8 +152,7 @@ crates/
   codex-plus-core/              Launch, injection, config, update, install, bridge
   codex-plus-data/              Session data, export, Provider Sync
 scripts/installer/
-  windows/CodexPlusPlus.nsi     Windows NSIS installer
-  macos/package-dmg.sh          macOS DMG packager
+  linux/package-deb.sh         Deepin / Debian package
 ```
 
 ## License

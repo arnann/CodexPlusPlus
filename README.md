@@ -9,8 +9,8 @@
 </p>
 
 <p align="center">
-  <img alt="Release" src="https://img.shields.io/github/v/release/BigPizzaV3/CodexPlusPlus">
-  <img alt="Stars" src="https://img.shields.io/github/stars/BigPizzaV3/CodexPlusPlus">
+  <img alt="Release" src="https://img.shields.io/github/v/release/arnann/CodexPlusPlus">
+  <img alt="Stars" src="https://img.shields.io/github/stars/arnann/CodexPlusPlus">
   <img alt="License" src="https://img.shields.io/github/license/BigPizzaV3/CodexPlusPlus">
   <img alt="Rust" src="https://img.shields.io/badge/rust-1.85%2B-orange">
   <img alt="Tauri" src="https://img.shields.io/badge/tauri-2.x-24C8DB">
@@ -20,18 +20,16 @@ Codex++ 是面向 OpenAI Codex / ChatGPT 桌面应用的外部启动器与管理
 
 ## 快速使用
 
-从 [GitHub Releases](https://github.com/BigPizzaV3/CodexPlusPlus/releases) 下载最新版安装包：
+从 [GitHub Releases](https://github.com/arnann/CodexPlusPlus/releases) 下载 Deepin 安装包：
 
-- Windows：`CodexPlusPlus-*-windows-x64-setup.exe`
-- macOS Intel：`CodexPlusPlus-*-macos-x64.dmg`
-- macOS Apple Silicon：`CodexPlusPlus-*-macos-arm64.dmg`
+- Deepin / Debian amd64：`codex-plus-plus_*_amd64.deb`
 
 安装后会有两个入口：
 
 - `Codex++`：静默启动官方桌面应用，并加载已保存的供应商配置与增强功能。
 - `Codex++ 管理工具`：管理供应商、模型、工具插件、会话、增强功能、脚本、更新和诊断。
 
-首次使用建议先打开管理工具，确认应用路径和运行状态，再配置供应商与增强功能，最后从 `Codex++` 入口启动。Windows 安装包会创建桌面和开始菜单快捷方式；macOS DMG 会安装 `/Applications/Codex++.app` 和 `/Applications/Codex++ 管理工具.app`。
+首次使用建议先打开管理工具，确认应用路径和运行状态，再配置供应商与增强功能，最后从 `Codex++` 入口启动。Deepin 安装包会安装启动器、管理工具和桌面菜单项。
 
 ## 赞助商
 
@@ -212,7 +210,7 @@ Codex++ 将官方登录、混入 API 和纯 API 分开保存和切换：
 
 ## 自动更新与安装包
 
-Codex++ 通过 GitHub Release 发布安装包。Windows 会生成 NSIS 安装程序，macOS 会生成 Intel x64 和 Apple Silicon arm64 两个 DMG。
+Codex++ 通过 GitHub Release 发布 Deepin / Debian amd64 安装包（`.deb`）。推送到 `main` 时也会生成可下载的 GitHub Actions Artifact。
 
 管理工具的“关于”页可以检查并启动更新。静默启动器发现新版本时会拉起管理工具并进入更新提示。
 
@@ -295,8 +293,7 @@ crates/
   codex-plus-core/              启动、注入、配置、更新、安装、桥接等核心逻辑
   codex-plus-data/              会话数据、导出、Provider 同步
 scripts/installer/
-  windows/CodexPlusPlus.nsi     Windows NSIS 安装包
-  macos/package-dmg.sh          macOS DMG 打包
+  linux/package-deb.sh         Deepin / Debian 安装包
 ```
 
 ## 开源协议
