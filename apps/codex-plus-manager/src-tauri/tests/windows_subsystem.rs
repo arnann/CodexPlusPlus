@@ -178,38 +178,38 @@ fn macos_packager_hides_silent_launcher_but_not_manager() {
 }
 
 #[test]
-fn github_release_workflow_builds_separate_macos_x64_and_arm64_dmgs() {
+fn github_workflow_builds_deepin_deb_on_main_and_release() {
     let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
     let workflow = manifest_dir
         .parent()
         .and_then(std::path::Path::parent)
         .and_then(std::path::Path::parent)
         .unwrap()
-        .join(".github/workflows/release-assets.yml");
-    let workflow = std::fs::read_to_string(&workflow).expect("read release assets workflow");
+        .join(".github/workflows/linux-deb.yml");
+    let workflow = std::fs::read_to_string(&workflow).expect("read Deepin package workflow");
 
-    assert!(workflow.contains("macos-15-intel"));
-    assert!(workflow.contains("x86_64-apple-darwin"));
-    assert!(workflow.contains("macos-14"));
-    assert!(workflow.contains("aarch64-apple-darwin"));
-    assert!(workflow.contains("package-dmg.sh \"$VERSION\" \"${{ matrix.arch }}\""));
-    assert!(workflow.contains("target/${{ matrix.target }}/release"));
+    assert!(workflow.contains("push:\n    branches: [main]"));
+    assert!(workflow.contains("workflow_dispatch:"));
+    assert!(workflow.contains("release:\n    types: [published]"));
+    assert!(workflow.contains("cargo build --release"));
+    assert!(workflow.contains("package-deb.sh \"$VERSION\" amd64"));
 }
 
 #[test]
-fn github_release_workflow_uploads_static_latest_json() {
+fn github_workflow_uploads_deepin_deb_artifact_and_release_asset() {
     let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
     let workflow = manifest_dir
         .parent()
         .and_then(std::path::Path::parent)
         .and_then(std::path::Path::parent)
         .unwrap()
-        .join(".github/workflows/release-assets.yml");
-    let workflow = std::fs::read_to_string(&workflow).expect("read release assets workflow");
+        .join(".github/workflows/linux-deb.yml");
+    let workflow = std::fs::read_to_string(&workflow).expect("read Deepin package workflow");
 
-    assert!(workflow.contains("latest-json:"));
-    assert!(workflow.contains("latest.json"));
-    assert!(workflow.contains("gh release upload \"$TAG\" latest.json --clobber"));
+    assert!(workflow.contains("actions/upload-artifact@v4"));
+    assert!(workflow.contains("codex-plus-plus-deepin-amd64-deb"));
+    assert!(workflow.contains("path: dist/linux/*.deb"));
+    assert!(workflow.contains("softprops/action-gh-release@v2"));
 }
 
 #[test]
