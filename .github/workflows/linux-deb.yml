@@ -13,7 +13,11 @@ permissions:
 jobs:
   linux-deb:
     name: Deepin package (amd64)
-    runs-on: ubuntu-24.04
+    # Debian 12 provides glibc 2.36 and the WebKitGTK 4.1 development stack
+    # required by Tauri, making the resulting binary compatible with Deepin.
+    runs-on: ubuntu-22.04
+    container:
+      image: debian:bookworm
 
     steps:
       - name: Checkout source
@@ -23,13 +27,20 @@ jobs:
 
       - name: Install Linux build dependencies
         run: |
-          sudo apt-get update
-          sudo apt-get install -y \
+          apt-get update
+          apt-get install -y \
+            build-essential \
+            ca-certificates \
+            curl \
             dpkg-dev \
+            git \
             libayatana-appindicator3-dev \
             libgtk-3-dev \
             librsvg2-dev \
-            libwebkit2gtk-4.1-dev
+            libwebkit2gtk-4.1-dev \
+            pkg-config \
+            python3 \
+            xz-utils
 
       - name: Setup Node
         uses: actions/setup-node@v4
