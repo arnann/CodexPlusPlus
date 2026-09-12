@@ -6,6 +6,8 @@ use codex_plus_core::app_paths::{
     find_latest_codex_app_dir_from_roots, find_macos_codex_app, normalize_codex_app_path,
     packaged_app_user_model_id, resolve_codex_app_dir_with_saved, user_data_candidates_from,
 };
+#[cfg(target_os = "linux")]
+use codex_plus_core::app_paths::find_linux_codex_app;
 use codex_plus_core::launcher::{
     CodexLaunch, DefaultLaunchHooks, LaunchHooks, LaunchOptions, MacosCleanupPolicy,
     MacosDebugLaunchAction, browser_identity_changed, build_codex_arguments,
@@ -392,6 +394,30 @@ fn app_paths_normalizes_executable_and_package_paths() {
     assert_eq!(
         normalize_codex_app_path(&portable).as_deref(),
         Some(app.as_path())
+    );
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn app_paths_finds_linux_chatgpt_installation() {
+    let temp = tempfile::tempdir().unwrap();
+    let app = temp.path().join("chatgpt");
+    std::fs::create_dir_all(app.join("resources")).unwrap();
+    std::fs::write(app.join("ChatGPT"), "").unwrap();
+    std::fs::write(app.join("resources/codex"), "").unwrap();
+
+    assert_eq!(
+        find_linux_codex_app(&[app.clone()]).as_deref(),
+        Some(app.as_path())
+    );
+    assert_eq!(
+        normalize_codex_app_path(&app.join("ChatGPT")).as_deref(),
+        Some(app.as_path())
+    );
+    assert_eq!(build_codex_executable(&app), app.join("ChatGPT"));
+    assert_eq!(
+        find_bundled_codex_cli(&app).as_deref(),
+        Some(app.join("resources/codex").as_path())
     );
 }
 

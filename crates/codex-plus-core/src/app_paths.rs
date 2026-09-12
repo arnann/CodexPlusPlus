@@ -13,7 +13,15 @@ struct AppPackageSpec {
 }
 
 const CODEX_PACKAGE_EXECUTABLES: &[&str] = &["ChatGPT.exe", "Codex.exe", "codex.exe"];
-const STANDALONE_CODEX_EXECUTABLES: &[&str] = &["ChatGPT.exe", "Codex.exe", "codex.exe"];
+const STANDALONE_CODEX_EXECUTABLES: &[&str] = &[
+    "ChatGPT.exe",
+    "Codex.exe",
+    "codex.exe",
+    "ChatGPT",
+    "chatgpt",
+    "Codex",
+    "codex",
+];
 
 #[cfg(windows)]
 const OPENAI_PACKAGE_FAMILY_NAMES: &[&str] = &[
@@ -89,10 +97,48 @@ pub fn find_latest_codex_app_dir_default() -> Option<PathBuf> {
             .max_by(compare_app_dir_candidates)
     }
 
-    #[cfg(not(windows))]
+    #[cfg(target_os = "linux")]
+    {
+        find_linux_codex_app_default()
+    }
+
+    #[cfg(all(not(windows), not(target_os = "linux")))]
     {
         None
     }
+}
+
+#[cfg(target_os = "linux")]
+fn find_linux_codex_app_default() -> Option<PathBuf> {
+    let mut candidates = Vec::new();
+    for root in [
+        Path::new("/usr/lib"),
+        Path::new("/usr/local/lib"),
+        Path::new("/opt"),
+    ] {
+        for name in ["chatgpt", "codex", "ChatGPT", "Codex"] {
+            candidates.push(root.join(name));
+        }
+    }
+    if let Some(home) = directories::BaseDirs::new().map(|dirs| dirs.home_dir().to_path_buf()) {
+        for root in [
+            home.join(".local/lib"),
+            home.join(".local/share"),
+            home.join(".local/opt"),
+        ] {
+            for name in ["chatgpt", "codex", "ChatGPT", "Codex"] {
+                candidates.push(root.join(name));
+            }
+        }
+    }
+    find_linux_codex_app(&candidates)
+}
+
+#[cfg(target_os = "linux")]
+pub fn find_linux_codex_app(search_roots: &[PathBuf]) -> Option<PathBuf> {
+    search_roots
+        .iter()
+        .find_map(|candidate| normalize_codex_app_path(candidate))
 }
 
 #[cfg(windows)]
@@ -673,7 +719,16 @@ pub(crate) fn is_supported_windows_app_package_name(package_name: &str) -> bool 
 }
 
 pub(crate) fn is_supported_app_executable_name(name: &str) -> bool {
-    name.eq_ignore_ascii_case("Codex.exe") || name.eq_ignore_ascii_case("ChatGPT.exe")
+    [
+        "Codex.exe",
+        "ChatGPT.exe",
+        "Codex",
+        "ChatGPT",
+        "codex",
+        "chatgpt",
+    ]
+    .into_iter()
+    .any(|supported| name.eq_ignore_ascii_case(supported))
 }
 
 fn package_spec_from_path(path: &Path) -> Option<AppPackageSpec> {
