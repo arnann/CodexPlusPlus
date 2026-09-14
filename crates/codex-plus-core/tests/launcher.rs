@@ -410,6 +410,7 @@ fn app_paths_finds_linux_chatgpt_installation() {
         find_linux_codex_app(&[app.clone()]).as_deref(),
         Some(app.as_path())
     );
+    assert_eq!(normalize_codex_app_path(&app).as_deref(), Some(app.as_path()));
     assert_eq!(
         normalize_codex_app_path(&app.join("ChatGPT")).as_deref(),
         Some(app.as_path())

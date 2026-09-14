@@ -19,8 +19,6 @@ const STANDALONE_CODEX_EXECUTABLES: &[&str] = &[
     "codex.exe",
     "ChatGPT",
     "chatgpt",
-    "Codex",
-    "codex",
 ];
 
 #[cfg(windows)]
@@ -410,7 +408,7 @@ pub fn normalize_codex_app_path(path: &Path) -> Option<PathBuf> {
     }
 
     let file_name = path.file_name().and_then(OsStr::to_str).unwrap_or_default();
-    if is_supported_app_executable_name(file_name) {
+    if path.is_file() && is_supported_app_executable_name(file_name) {
         return path.parent().map(Path::to_path_buf);
     }
 
@@ -722,9 +720,7 @@ pub(crate) fn is_supported_app_executable_name(name: &str) -> bool {
     [
         "Codex.exe",
         "ChatGPT.exe",
-        "Codex",
         "ChatGPT",
-        "codex",
         "chatgpt",
     ]
     .into_iter()
@@ -774,7 +770,7 @@ fn executable_in_dir(dir: &Path) -> Option<PathBuf> {
         .unwrap_or(STANDALONE_CODEX_EXECUTABLES);
     for name in names {
         let candidate = dir.join(name);
-        if candidate.exists() {
+        if candidate.is_file() {
             return Some(candidate);
         }
     }
