@@ -10,6 +10,8 @@ use codex_plus_core::watcher::{
     WindowsProcessInfo, find_codex_processes_from_snapshot,
     find_session_index_cleanup_blocking_processes_from_snapshot,
 };
+#[cfg(target_os = "linux")]
+use codex_plus_core::watcher::linux_codex_process_ids;
 
 #[test]
 fn cdp_listening_returns_true_for_bound_loopback_port() {
@@ -71,6 +73,30 @@ fn spawn_launcher_command_points_to_silent_binary_only() {
     assert!(command.contains(&"--debug-port".to_string()));
     assert!(command.contains(&"9444".to_string()));
     assert!(!command.iter().any(|part| part.contains("manager")));
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn linux_codex_process_scan_keeps_only_chatgpt_main_process() {
+    let processes = [
+        (
+            42,
+            "/usr/lib/chatgpt/ChatGPT".into(),
+            b"/usr/lib/chatgpt/ChatGPT\0--remote-debugging-port=9229\0".to_vec(),
+        ),
+        (
+            43,
+            "/usr/lib/chatgpt/ChatGPT".into(),
+            b"/usr/lib/chatgpt/ChatGPT\0--type=renderer\0".to_vec(),
+        ),
+        (
+            44,
+            "/usr/lib/chatgpt/resources/codex".into(),
+            b"/usr/lib/chatgpt/resources/codex\0app-server\0".to_vec(),
+        ),
+    ];
+
+    assert_eq!(linux_codex_process_ids(processes), vec![42]);
 }
 
 #[test]

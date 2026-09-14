@@ -1,7 +1,9 @@
 use std::collections::{HashMap, HashSet};
+#[cfg(target_os = "linux")]
+use std::ffi::OsStr;
 use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, TcpStream};
 use std::path::{Path, PathBuf};
-#[cfg(any(windows, target_os = "macos"))]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 use std::process::{Command, Stdio};
 use std::time::Duration;
 
@@ -489,12 +491,52 @@ pub fn find_session_index_cleanup_blocking_processes() -> Vec<u32> {
     find_codex_processes()
 }
 
-#[cfg(not(any(windows, target_os = "macos")))]
+#[cfg(target_os = "linux")]
+pub fn find_codex_processes() -> Vec<u32> {
+    let Ok(entries) = std::fs::read_dir("/proc") else {
+        return Vec::new();
+    };
+    let processes = entries.filter_map(Result::ok).filter_map(|entry| {
+        let process_id = entry.file_name().to_str()?.parse::<u32>().ok()?;
+        let executable = std::fs::read_link(entry.path().join("exe")).ok()?;
+        let command_line = std::fs::read(entry.path().join("cmdline")).ok()?;
+        Some((process_id, executable, command_line))
+    });
+    linux_codex_process_ids(processes)
+}
+
+#[cfg(target_os = "linux")]
+pub fn linux_codex_process_ids(
+    processes: impl IntoIterator<Item = (u32, PathBuf, Vec<u8>)>,
+) -> Vec<u32> {
+    let mut ids = processes
+        .into_iter()
+        .filter_map(|(process_id, executable, command_line)| {
+            let executable_name = executable.file_name().and_then(OsStr::to_str)?;
+            let is_chatgpt = executable_name.eq_ignore_ascii_case("ChatGPT");
+            let is_child = command_line
+                .split(|byte| *byte == 0)
+                .skip(1)
+                .any(|arg| arg.starts_with(b"--type="));
+            (is_chatgpt && !is_child).then_some(process_id)
+        })
+        .collect::<Vec<_>>();
+    ids.sort_unstable();
+    ids.dedup();
+    ids
+}
+
+#[cfg(target_os = "linux")]
+pub fn find_session_index_cleanup_blocking_processes() -> Vec<u32> {
+    find_codex_processes()
+}
+
+#[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
 pub fn find_codex_processes() -> Vec<u32> {
     Vec::new()
 }
 
-#[cfg(not(any(windows, target_os = "macos")))]
+#[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
 pub fn find_session_index_cleanup_blocking_processes() -> Vec<u32> {
     Vec::new()
 }
@@ -567,7 +609,14 @@ pub fn stop_codex_processes() {
     }
 }
 
-#[cfg(not(any(windows, target_os = "macos")))]
+#[cfg(target_os = "linux")]
+pub fn stop_codex_processes() {
+    for process_id in find_codex_processes() {
+        let _ = terminate_linux_process(process_id);
+    }
+}
+
+#[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
 pub fn stop_codex_processes() {}
 
 #[cfg(target_os = "macos")]
@@ -596,7 +645,23 @@ pub fn stop_codex_processes_and_wait() {
     );
 }
 
-#[cfg(not(any(windows, target_os = "macos")))]
+#[cfg(target_os = "linux")]
+pub fn stop_codex_processes_and_wait() {
+    let process_ids = find_codex_processes();
+    for process_id in &process_ids {
+        let _ = terminate_linux_process(*process_id);
+    }
+    let deadline = std::time::Instant::now() + Duration::from_millis(RESTART_STOP_WAIT_TIMEOUT_MS);
+    while process_ids
+        .iter()
+        .any(|process_id| process_id_is_running(*process_id) == Some(true))
+        && std::time::Instant::now() < deadline
+    {
+        std::thread::sleep(Duration::from_millis(RESTART_STOP_WAIT_INTERVAL_MS));
+    }
+}
+
+#[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
 pub fn stop_codex_processes_and_wait() {}
 
 #[cfg(target_os = "macos")]
@@ -651,6 +716,16 @@ fn terminate_macos_processes_and_wait<F>(
 
 #[cfg(target_os = "macos")]
 fn terminate_macos_process(process_id: u32) -> std::io::Result<()> {
+    Command::new("kill")
+        .arg(process_id.to_string())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .map(|_| ())
+}
+
+#[cfg(target_os = "linux")]
+fn terminate_linux_process(process_id: u32) -> std::io::Result<()> {
     Command::new("kill")
         .arg(process_id.to_string())
         .stdout(Stdio::null())

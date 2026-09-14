@@ -901,6 +901,13 @@ impl LaunchHooks for DefaultLaunchHooks {
             });
         }
 
+        #[cfg(target_os = "linux")]
+        if !crate::cdp::endpoint_available(debug_port)
+            && !crate::watcher::find_codex_processes().is_empty()
+        {
+            crate::watcher::stop_codex_processes_and_wait();
+        }
+
         let command = if let Some(inspector_port) = native_menu_inspector_port {
             build_codex_command_with_native_menu_inspector(
                 app_dir,
