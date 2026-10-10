@@ -70,6 +70,11 @@ jobs:
         continue-on-error: true
         run: cargo test --workspace
 
+      - name: Verify Linux app detection and process filtering
+        run: |
+          cargo test -p codex-plus-core --test launcher app_paths_ -- --test-threads=1
+          cargo test -p codex-plus-core --test watcher linux_codex_process_scan
+
       - name: Build release binaries
         run: cargo build --release
 
@@ -83,7 +88,7 @@ jobs:
           VERSION="${VERSION#V}"
           VERSION="${VERSION//\//-}"
           if [ -z "$VERSION" ] || [ "$VERSION" = "main" ]; then
-            VERSION="0.0.0-${GITHUB_RUN_NUMBER}"
+            VERSION="$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -n 1)+deepin.${GITHUB_RUN_NUMBER}"
           fi
           bash scripts/installer/linux/package-deb.sh "$VERSION" amd64
 
