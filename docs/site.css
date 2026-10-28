@@ -638,6 +638,10 @@ button {
   margin-top: 48px;
 }
 
+.showcase-personal:has(> figure:only-child) {
+  grid-template-columns: minmax(0, 1fr);
+}
+
 .showcase-grid figcaption,
 .showcase-personal figcaption {
   align-items: flex-start;
@@ -699,6 +703,14 @@ button {
   color: var(--white);
   font-size: 14px;
   line-height: 1.9;
+}
+
+.model-picker img {
+  width: 100%;
+  height: auto;
+  border-radius: 6px;
+  border: 1px solid var(--line);
+  box-shadow: 0 18px 42px rgba(24, 28, 36, 0.09);
 }
 
 .community-links {

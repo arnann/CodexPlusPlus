@@ -31,6 +31,49 @@ fn browser_identity_change_requires_two_distinct_observations() {
     assert!(browser_identity_changed(Some("browser-a"), "browser-b"));
 }
 
+#[tokio::test]
+async fn launch_receipt_status_and_injection_follow_final_wrapper_port() {
+    let temp = tempfile::tempdir().unwrap();
+    let app = temp.path().join("Codex.app");
+    std::fs::create_dir(&app).unwrap();
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let hooks = FakeHooks::new(events.clone()).with_launch_result(CodexLaunch::Process {
+        command: vec!["ChatGPT.exe".into(), "--remote-debugging-port=19451".into()],
+        wait_strategy: codex_plus_core::launcher::ProcessWaitStrategy::ExternalWaitCommand,
+        macos_cleanup_policy: None,
+    });
+    let handle = launch_and_inject_with_hooks(
+        LaunchOptions {
+            app_dir: Some(app),
+            debug_port: 19450,
+            helper_port: 19452,
+            status_store: StatusStore::new(temp.path().join("status.json")),
+            codex_home: Some(temp.path().join("codex-home")),
+            sqlite_home: Some(temp.path().join("sqlite-home")),
+            state_dir: Some(temp.path().join("state")),
+        },
+        &hooks,
+    )
+    .await
+    .unwrap();
+    assert_eq!(handle.debug_port, 19451);
+    let status = handle.status_store.load_latest().unwrap().unwrap();
+    assert_eq!(status.debug_port, Some(19451));
+    assert_eq!(status.helper_port, Some(19452));
+    assert!(
+        events
+            .lock()
+            .unwrap()
+            .contains(&"inject:19451:19452".into())
+    );
+    assert!(
+        !events
+            .lock()
+            .unwrap()
+            .contains(&"inject:19450:19452".into())
+    );
+}
+
 #[test]
 fn app_paths_find_latest_windows_package_prefers_highest_version_app_dir() {
     let temp = tempfile::tempdir().unwrap();
@@ -199,7 +242,10 @@ fn app_paths_resolves_portable_current_link_to_directory_version() {
     std::fs::create_dir_all(&target).unwrap();
     std::fs::write(target.join("Codex.exe"), "").unwrap();
     std::fs::write(target.join("version"), "42.1.0\n").unwrap();
-    std::os::windows::fs::symlink_dir(&target, &current).unwrap();
+    // Windows 创建目录符号链接需要额外特权；无权限的机器跳过这个环境专用回归。
+    if std::os::windows::fs::symlink_dir(&target, &current).is_err() {
+        return;
+    }
 
     assert_eq!(
         codex_app_version(&current).as_deref(),
@@ -382,6 +428,8 @@ fn app_paths_normalizes_executable_and_package_paths() {
     let app = portable.join("app");
     std::fs::create_dir_all(&app).unwrap();
     std::fs::write(app.join("Codex.exe"), "").unwrap();
+    std::fs::create_dir(app.join("resources")).unwrap();
+    std::fs::write(app.join("resources/app.asar"), "electron").unwrap();
 
     assert_eq!(
         normalize_codex_app_path(&app.join("Codex.exe")).as_deref(),
@@ -401,6 +449,7 @@ fn app_paths_finds_linux_chatgpt_installation() {
     std::fs::create_dir_all(app.join("resources")).unwrap();
     std::fs::write(app.join("ChatGPT"), "").unwrap();
     std::fs::write(app.join("resources/codex"), "").unwrap();
+    std::fs::write(app.join("resources/app.asar"), "").unwrap();
 
     assert_eq!(
         find_linux_codex_app(&[temp.path().to_path_buf()]).as_deref(),
@@ -490,6 +539,8 @@ fn app_paths_accepts_real_codex_inside_a_codex_plus_plus_named_directory() {
     let app_dir = temp.path().join("codex++");
     std::fs::create_dir_all(&app_dir).unwrap();
     std::fs::write(app_dir.join("Codex.exe"), "").unwrap();
+    std::fs::create_dir(app_dir.join("resources")).unwrap();
+    std::fs::write(app_dir.join("resources/app.asar"), "electron").unwrap();
 
     assert_eq!(
         normalize_codex_app_path(&app_dir).as_deref(),
@@ -596,9 +647,11 @@ fn app_paths_invalid_saved_path_falls_back_instead_of_sticking() {
 
     // 合法独立安装：即使 saved 指向 Codex++，规范化失败后应能落到该候选
     // （通过显式 app_dir 验证回退链之外的合法路径仍可用）
-    let standalone = temp.path().join("OpenAI").join("Codex").join("bin");
+    let standalone = temp.path().join("Programs").join("OpenAI").join("Codex");
     std::fs::create_dir_all(&standalone).unwrap();
     std::fs::write(standalone.join("codex.exe"), "").unwrap();
+    std::fs::create_dir(standalone.join("resources")).unwrap();
+    std::fs::write(standalone.join("resources/app.asar"), "electron").unwrap();
 
     assert_eq!(normalize_codex_app_path(&junk), None);
     assert_eq!(
@@ -638,6 +691,8 @@ fn app_paths_linux_detects_chatgpt_executable_and_builds_it() {
     std::fs::create_dir_all(&app).unwrap();
     let bin = app.join("ChatGPT");
     std::fs::write(&bin, "").unwrap();
+    std::fs::create_dir(app.join("resources")).unwrap();
+    std::fs::write(app.join("resources/app.asar"), "electron").unwrap();
     std::fs::write(app.join("version"), "42.3.0").unwrap();
 
     // 传入目录
@@ -666,8 +721,9 @@ fn app_paths_linux_finds_codex_app_from_search_roots_avoiding_empty_opt() {
     // 模拟 /usr/lib/chatgpt/ChatGPT
     let usr_lib = temp.path().join("usr").join("lib");
     let chatgpt_dir = usr_lib.join("chatgpt");
-    std::fs::create_dir_all(&chatgpt_dir).unwrap();
+    std::fs::create_dir_all(chatgpt_dir.join("resources")).unwrap();
     std::fs::write(chatgpt_dir.join("ChatGPT"), "").unwrap();
+    std::fs::write(chatgpt_dir.join("resources/app.asar"), "").unwrap();
 
     let roots = vec![opt, usr_lib];
     assert_eq!(
@@ -884,11 +940,52 @@ fn launcher_packaged_activation_can_preserve_process_id() {
 }
 
 #[test]
-fn launcher_applies_codexplusplus_window_icon_after_packaged_activation() {
+fn launcher_keeps_taskbar_integration_without_overriding_codex_icons() {
     let source = include_str!("../src/launcher.rs");
+    assert!(source.contains("apply_codexplusplus_taskbar_after_launch(process_id);"));
+    assert!(source.contains("windows_integration::apply_codexplusplus_taskbar_to_process_window(process_id)"));
+    for forbidden in [
+        "apply_codexplusplus_window_icon",
+        "apply_native_codex_taskbar",
+        "apply_codexplusplus_icon",
+        "windows_apply_codexplusplus_icon",
+        "WM_SETICON",
+        "PKEY_AppUserModel",
+        "ImplicitAppShortcuts",
+    ] {
+        assert!(!source.contains(forbidden), "launcher must not override Codex icons: {forbidden}");
+    }
+    for production in [
+        include_str!("../src/windows_integration.rs"),
+        include_str!("../src/windows_taskbar.rs"),
+    ] {
+        for forbidden in ["PKEY_AppUserModel_RelaunchIconResource", "WM_SETICON", "ImplicitAppShortcuts"] {
+            assert!(!production.contains(forbidden), "integration must not override Codex icons: {forbidden}");
+        }
+    }
+}
 
-    assert!(source.contains("apply_codexplusplus_window_icon_after_launch(process_id);"));
-    assert!(source.contains("windows_apply_codexplusplus_icon_to_process_window"));
+#[test]
+fn local_relaunch_process_pattern_matches_literal_bundle_paths_only() {
+    let script = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../scripts/relaunch-local.mjs");
+    let fixture = r#"
+const fs = require('node:fs');
+const assert = require('node:assert/strict');
+const source = fs.readFileSync(process.argv[1], 'utf8');
+const fn = source.match(/^function localBundleProcessPattern\(bundle\) \{[^]*?^\}/m);
+assert.ok(fn);
+const pattern = new Function(fn[0] + '; return localBundleProcessPattern;')();
+const bundle = '/tmp/work+[fixture]/Codex++.app';
+const re = new RegExp(pattern(bundle));
+assert.ok(re.test(bundle + '/Contents/MacOS/CodexPlusPlus'));
+assert.ok(!re.test('/Applications/Codex++.app/Contents/MacOS/CodexPlusPlus'));
+assert.ok(!re.test('/tmp/work+[fixture]/Codexxx.app/Contents/MacOS/CodexPlusPlus'));
+assert.ok(!re.test(bundle + '.other/Contents/MacOS/CodexPlusPlus'));
+"#;
+    let output = std::process::Command::new("node")
+        .args(["-e", fixture]).arg(script).output().unwrap();
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
 }
 
 #[test]
@@ -1127,6 +1224,7 @@ async fn launch_lifecycle_runs_enabled_maintenance_without_applying_relay_profil
             debug_port: 9229,
             helper_port: 57321,
             status_store,
+            ..Default::default()
         },
         &hooks,
     )
@@ -1165,6 +1263,57 @@ async fn launch_lifecycle_runs_enabled_maintenance_without_applying_relay_profil
 }
 
 #[tokio::test]
+async fn native_fast_reload_runs_only_after_successful_opt_in_launch_injection() {
+    for (enhancements, native_fast, injection_ok) in [
+        (true, true, true),
+        (true, false, true),
+        (false, true, true),
+        (true, true, false),
+    ] {
+        let temp = tempfile::tempdir().unwrap();
+        let app_dir = temp.path().join("Codex.app");
+        std::fs::create_dir_all(&app_dir).unwrap();
+        let events = Arc::new(Mutex::new(Vec::<String>::new()));
+        let mut hooks = FakeHooks::new(events.clone()).with_settings(BackendSettings {
+            enhancements_enabled: enhancements,
+            codex_app_native_fast_unlock: native_fast,
+            relay_profiles_enabled: false,
+            ..BackendSettings::default()
+        });
+        if !injection_ok {
+            hooks = hooks.with_inject_error("fixture injection unavailable");
+        }
+        let handle = launch_and_inject_with_hooks(
+            LaunchOptions {
+                app_dir: Some(app_dir),
+                debug_port: 9229,
+                helper_port: 57321,
+                status_store: StatusStore::new(temp.path().join("status.json")),
+                ..Default::default()
+            },
+            &hooks,
+        )
+        .await
+        .unwrap();
+        handle.wait_for_codex_exit().await.unwrap();
+        let events = events.lock().unwrap();
+        let reload = events.iter().position(|event| event == "native-fast:9229");
+        assert_eq!(reload.is_some(), enhancements && native_fast && injection_ok);
+        if let Some(reload) = reload {
+            let injection = events
+                .iter()
+                .position(|event| event == "inject:9229:57321")
+                .unwrap();
+            assert!(injection < reload);
+            assert_eq!(
+                events.iter().filter(|event| *event == "native-fast:9229").count(),
+                1
+            );
+        }
+    }
+}
+
+#[tokio::test]
 async fn launch_lifecycle_passes_configured_extra_args_to_codex_launch() {
     let temp = tempfile::tempdir().unwrap();
     let app_dir = temp.path().join("Codex.app");
@@ -1182,6 +1331,7 @@ async fn launch_lifecycle_passes_configured_extra_args_to_codex_launch() {
             debug_port: 9229,
             helper_port: 57321,
             status_store,
+            ..Default::default()
         },
         &hooks,
     )
@@ -1217,6 +1367,7 @@ async fn launch_lifecycle_keeps_js_injection_with_legacy_launch_mode() {
             debug_port: 9229,
             helper_port: 57321,
             status_store,
+            ..Default::default()
         },
         &hooks,
     )
@@ -1258,6 +1409,7 @@ async fn launch_lifecycle_skips_helper_and_injection_when_enhancements_disabled(
             debug_port: 9229,
             helper_port: 57321,
             status_store,
+            ..Default::default()
         },
         &hooks,
     )
@@ -1306,6 +1458,7 @@ async fn official_mix_responses_profile_starts_fixed_protocol_proxy_without_enha
             debug_port: 9229,
             helper_port: 58123,
             status_store,
+            ..Default::default()
         },
         &hooks,
     )
@@ -1359,6 +1512,7 @@ async fn fixed_protocol_proxy_port_waits_for_the_previous_helper_to_release_it()
             debug_port: 9229,
             helper_port: 58123,
             status_store,
+            ..Default::default()
         },
         &hooks,
     )
@@ -1396,6 +1550,7 @@ async fn a_permanently_busy_protocol_proxy_port_reports_what_the_user_should_do(
             debug_port: 9229,
             helper_port: 58123,
             status_store,
+            ..Default::default()
         },
         &hooks,
     )
@@ -1439,6 +1594,7 @@ async fn a_persistently_forbidden_protocol_proxy_port_fails_after_the_wait_with_
             debug_port: 9229,
             helper_port: 58123,
             status_store,
+            ..Default::default()
         },
         &hooks,
     )
@@ -1502,6 +1658,7 @@ async fn a_transient_forbidden_protocol_proxy_port_retries_until_it_can_bind() {
             debug_port: 9229,
             helper_port: 58123,
             status_store,
+            ..Default::default()
         },
         &hooks,
     )
@@ -1544,6 +1701,7 @@ async fn an_unrelated_helper_bind_error_is_reported_as_is() {
             debug_port: 9229,
             helper_port: 58123,
             status_store,
+            ..Default::default()
         },
         &hooks,
     )
@@ -1588,6 +1746,7 @@ async fn a_busy_floating_helper_port_respects_the_platform_retry_budget() {
             debug_port: 9229,
             helper_port: 58123,
             status_store,
+            ..Default::default()
         },
         &hooks,
     )
@@ -1628,6 +1787,7 @@ async fn pending_remote_control_recovery_runs_without_an_official_mix_profile() 
             debug_port: 9229,
             helper_port: 58123,
             status_store,
+            ..Default::default()
         },
         &hooks,
     )
@@ -1671,6 +1831,7 @@ async fn official_mix_responses_profile_keeps_proxy_when_profile_switching_is_di
             debug_port: 9229,
             helper_port: 58123,
             status_store,
+            ..Default::default()
         },
         &hooks,
     )
@@ -1703,6 +1864,7 @@ async fn launch_lifecycle_does_not_apply_relay_profile_before_launching_codex() 
             debug_port: 9229,
             helper_port: 57321,
             status_store,
+            ..Default::default()
         },
         &hooks,
     )
@@ -1733,6 +1895,7 @@ async fn launch_lifecycle_skips_active_relay_profile_when_supplier_config_disabl
             debug_port: 9229,
             helper_port: 57321,
             status_store,
+            ..Default::default()
         },
         &hooks,
     )
@@ -1784,6 +1947,7 @@ experimental_bearer_token = "sk-test"
             debug_port: 9229,
             helper_port: 57321,
             status_store,
+            ..Default::default()
         },
         &hooks,
     )
@@ -1811,6 +1975,7 @@ async fn launch_lifecycle_enters_degraded_mode_and_retries_when_injection_fails(
             debug_port: 9229,
             helper_port: 57321,
             status_store: status_store.clone(),
+            ..Default::default()
         },
         &hooks,
     )
@@ -1855,6 +2020,7 @@ async fn launch_lifecycle_cleans_helper_when_launch_fails_after_helper_started()
             debug_port: 9229,
             helper_port: 57321,
             status_store: status_store.clone(),
+            ..Default::default()
         },
         &hooks,
     )
@@ -1892,6 +2058,8 @@ async fn launch_starts_helper_when_chat_protocol_proxy_is_enabled() {
             base_url: "https://chat-only.example.test/v1".to_string(),
             upstream_base_url: "https://chat-only.example.test/v1".to_string(),
             api_key: "sk-test".to_string(),
+            api_keys: Vec::new(),
+            active_api_key_id: String::new(),
             protocol: RelayProtocol::ChatCompletions,
             relay_mode: codex_plus_core::settings::RelayMode::MixedApi,
             official_mix_api_key: false,
@@ -1918,11 +2086,16 @@ async fn launch_starts_helper_when_chat_protocol_proxy_is_enabled() {
             model_routes: Vec::new(),
             custom_headers: Vec::new(),
             standard_openai_protocol: false,
-            rate_limit_cooldown_enabled: false,
-            channel_queue_enabled: false,
-            channel_requests_per_minute:
-                codex_plus_core::settings::default_channel_requests_per_minute(),
-            cooldown_error_statuses: codex_plus_core::settings::default_cooldown_error_statuses(),
+            web_search_history_compat: false,
+            trust_upstream_catalog_lite: false,
+            strict_responses_reasoning: false,
+            auto_review_model: String::new(),
+            anthropic_auth_header: String::new(),
+            anthropic_max_tokens: 0,
+            anthropic_prompt_cache: true,
+            anthropic_impersonate_claude_code: false,
+            anthropic_thinking_mode: String::new(),
+            gateway_proxy: None,
         }],
         active_relay_id: "relay-chat".to_string(),
         ..BackendSettings::default()
@@ -1935,6 +2108,7 @@ async fn launch_starts_helper_when_chat_protocol_proxy_is_enabled() {
             debug_port: 9229,
             helper_port: 58000,
             status_store,
+            ..Default::default()
         },
         &hooks,
     )
@@ -1994,6 +2168,7 @@ async fn launch_starts_helper_when_model_routing_is_enabled() {
             debug_port: 9229,
             helper_port: 58000,
             status_store,
+            ..Default::default()
         },
         &hooks,
     )
@@ -2021,6 +2196,51 @@ async fn launch_starts_helper_when_model_routing_is_enabled() {
 }
 
 #[tokio::test]
+async fn launch_starts_helper_when_web_search_history_compat_is_enabled() {
+    let temp = tempfile::tempdir().unwrap();
+    let app_dir = temp.path().join("Codex.app");
+    std::fs::create_dir_all(&app_dir).unwrap();
+    let events = Arc::new(Mutex::new(Vec::<String>::new()));
+    let settings = BackendSettings {
+        enhancements_enabled: false,
+        active_relay_id: "search-compat".to_string(),
+        relay_profiles: vec![RelayProfile {
+            id: "search-compat".to_string(),
+            relay_mode: codex_plus_core::settings::RelayMode::PureApi,
+            web_search_history_compat: true,
+            ..RelayProfile::default()
+        }],
+        ..BackendSettings::default()
+    };
+    let hooks = FakeHooks::new(events.clone()).with_settings(settings);
+    let handle = launch_and_inject_with_hooks(
+        LaunchOptions {
+            app_dir: Some(app_dir),
+            debug_port: 9229,
+            helper_port: 58000,
+            status_store: StatusStore::new(temp.path().join("latest-status.json")),
+            ..Default::default()
+        },
+        &hooks,
+    )
+    .await
+    .unwrap();
+    assert!(
+        events
+            .lock()
+            .unwrap()
+            .contains(&"start-helper:57321".to_string())
+    );
+    handle.wait_for_codex_exit().await.unwrap();
+    assert!(
+        events
+            .lock()
+            .unwrap()
+            .contains(&"shutdown-helper:57321".to_string())
+    );
+}
+
+#[tokio::test]
 async fn launch_lifecycle_cleans_helper_and_codex_when_status_save_fails() {
     let temp = tempfile::tempdir().unwrap();
     let app_dir = temp.path().join("Codex.app");
@@ -2045,6 +2265,7 @@ async fn launch_lifecycle_cleans_helper_and_codex_when_status_save_fails() {
             debug_port: 9229,
             helper_port: 57321,
             status_store,
+            ..Default::default()
         },
         &hooks,
     )
@@ -2089,6 +2310,7 @@ async fn launch_lifecycle_keeps_packaged_process_id_running_and_retries_when_inj
             debug_port: 9229,
             helper_port: 57321,
             status_store,
+            ..Default::default()
         },
         &hooks,
     )
@@ -2105,7 +2327,8 @@ async fn launch_lifecycle_keeps_packaged_process_id_running_and_retries_when_inj
 }
 
 #[tokio::test]
-async fn degraded_packaged_launch_captures_identity_before_monitoring_and_keeps_helper_until_exit() {
+async fn degraded_packaged_launch_captures_identity_before_monitoring_and_keeps_helper_until_exit()
+{
     let temp = tempfile::tempdir().unwrap();
     let app_dir = temp.path().join("Codex.app");
     std::fs::create_dir_all(&app_dir).unwrap();
@@ -2126,27 +2349,182 @@ async fn degraded_packaged_launch_captures_identity_before_monitoring_and_keeps_
             debug_port: 9229,
             helper_port: 57321,
             status_store: StatusStore::new(temp.path().join("latest-status.json")),
+            ..Default::default()
         },
         &hooks,
     )
     .await
     .unwrap();
     assert_eq!(
-        events.lock().unwrap().iter().filter(|event| *event == "capture-identity:9229").count(),
+        events
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|event| *event == "capture-identity:9229")
+            .count(),
         1,
     );
-    assert_eq!(handle.status_store.load_latest().unwrap().unwrap().status, "running_degraded");
+    assert_eq!(
+        handle.status_store.load_latest().unwrap().unwrap().status,
+        "running_degraded"
+    );
     let mut waiting = std::pin::pin!(handle.wait_for_codex_exit());
-    assert!(tokio::time::timeout(std::time::Duration::from_millis(10), &mut waiting).await.is_err());
+    assert!(
+        tokio::time::timeout(std::time::Duration::from_millis(10), &mut waiting)
+            .await
+            .is_err()
+    );
     let current = events.lock().unwrap().clone();
-    let captured = current.iter().position(|event| event == "capture-identity:9229").unwrap();
-    let monitor = current.iter().position(|event| event == "wait-codex").unwrap();
+    let captured = current
+        .iter()
+        .position(|event| event == "capture-identity:9229")
+        .unwrap();
+    let monitor = current
+        .iter()
+        .position(|event| event == "wait-codex")
+        .unwrap();
     assert!(captured < monitor);
-    assert!(!current.iter().any(|event| event.starts_with("shutdown-helper:")));
+    assert!(
+        !current
+            .iter()
+            .any(|event| event.starts_with("shutdown-helper:"))
+    );
     exit.notify_one();
     waiting.await.unwrap();
-    assert!(events.lock().unwrap().iter().any(|event| event == "shutdown-helper:57321"));
-    assert_eq!(handle.status_store.load_latest().unwrap().unwrap().status, "stopped");
+    assert!(
+        events
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|event| event == "shutdown-helper:57321")
+    );
+    assert_eq!(
+        handle.status_store.load_latest().unwrap().unwrap().status,
+        "stopped"
+    );
+}
+
+#[tokio::test]
+async fn standalone_quota_unlock_disabled_does_not_connect_to_cdp() {
+    let temp = tempfile::tempdir().unwrap();
+    let app_dir = temp.path().join("Codex.app");
+    std::fs::create_dir_all(&app_dir).unwrap();
+    let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+        .await
+        .unwrap();
+    let hooks = FakeHooks::new(Arc::new(Mutex::new(Vec::new()))).with_settings(BackendSettings {
+        enhancements_enabled: false,
+        codex_app_standalone_quota_unlock: false,
+        provider_sync_enabled: false,
+        ..BackendSettings::default()
+    });
+    let handle = launch_and_inject_with_hooks(
+        LaunchOptions {
+            app_dir: Some(app_dir),
+            debug_port: listener.local_addr().unwrap().port(),
+            status_store: StatusStore::new(temp.path().join("status.json")),
+            ..LaunchOptions::default()
+        },
+        &hooks,
+    )
+    .await
+    .unwrap();
+    assert!(
+        tokio::time::timeout(std::time::Duration::from_millis(100), listener.accept())
+            .await
+            .is_err()
+    );
+    handle.wait_for_codex_exit().await.unwrap();
+}
+
+#[tokio::test]
+async fn isolated_quota_gate_is_not_started_when_status_save_fails() {
+    let temp = tempfile::tempdir().unwrap();
+    let app_dir = temp.path().join("Codex.app");
+    std::fs::create_dir_all(&app_dir).unwrap();
+    let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+        .await
+        .unwrap();
+    let hooks = FakeHooks::new(Arc::new(Mutex::new(Vec::new()))).with_settings(BackendSettings {
+        enhancements_enabled: false,
+        codex_app_standalone_quota_unlock: true,
+        provider_sync_enabled: false,
+        ..BackendSettings::default()
+    });
+    let result = launch_and_inject_with_hooks(
+        LaunchOptions {
+            app_dir: Some(app_dir),
+            debug_port: listener.local_addr().unwrap().port(),
+            status_store: StatusStore::new(temp.path().join("unwritable/status.json")),
+            ..LaunchOptions::default()
+        },
+        &hooks,
+    );
+    std::fs::write(temp.path().join("unwritable"), "not a directory").unwrap();
+    assert!(result.await.is_err());
+    assert!(
+        tokio::time::timeout(std::time::Duration::from_millis(100), listener.accept(),)
+            .await
+            .is_err()
+    );
+}
+
+#[tokio::test]
+async fn isolated_quota_gate_stops_on_exit_monitor_error_and_explicit_restart() {
+    use tokio::io::AsyncReadExt;
+    for (wait_error, explicit_stop) in [(false, false), (true, false), (false, true)] {
+        let temp = tempfile::tempdir().unwrap();
+        let app_dir = temp.path().join("Codex.app");
+        std::fs::create_dir_all(&app_dir).unwrap();
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .unwrap();
+        let debug_port = listener.local_addr().unwrap().port();
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let mut hooks = FakeHooks::new(events).with_settings(BackendSettings {
+            enhancements_enabled: false,
+            codex_app_standalone_quota_unlock: true,
+            provider_sync_enabled: false,
+            ..BackendSettings::default()
+        });
+        hooks.wait_error = wait_error;
+        let handle = launch_and_inject_with_hooks(
+            LaunchOptions {
+                app_dir: Some(app_dir),
+                debug_port,
+                status_store: StatusStore::new(temp.path().join("latest-status.json")),
+                ..LaunchOptions::default()
+            },
+            &hooks,
+        )
+        .await
+        .unwrap();
+        let (mut stream, _) =
+            tokio::time::timeout(std::time::Duration::from_secs(2), listener.accept())
+                .await
+                .unwrap()
+                .unwrap();
+        let mut buffer = [0; 2048];
+        stream.read(&mut buffer).await.unwrap();
+        if explicit_stop {
+            handle.stop_isolated_api_quota_gate().await;
+        } else {
+            assert_eq!(handle.wait_for_codex_exit().await.is_err(), wait_error);
+        }
+        // 同一端口仍被保留，旧会话不允许再探测或注入它。
+        assert_eq!(
+            tokio::time::timeout(std::time::Duration::from_secs(1), stream.read(&mut buffer),)
+                .await
+                .unwrap()
+                .unwrap(),
+            0
+        );
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_millis(550), listener.accept(),)
+                .await
+                .is_err()
+        );
+    }
 }
 
 #[tokio::test]
@@ -2165,15 +2543,31 @@ async fn proxy_only_packaged_launch_captures_identity_without_attempting_rendere
     hooks.record_identity_capture = true;
     let handle = launch_and_inject_with_hooks(
         LaunchOptions {
-            app_dir: Some(app_dir), debug_port: 9229, helper_port: 57321,
+            app_dir: Some(app_dir),
+            debug_port: 9229,
+            helper_port: 57321,
             status_store: StatusStore::new(temp.path().join("latest-status.json")),
-        }, &hooks,
-    ).await.unwrap();
+            ..Default::default()
+        },
+        &hooks,
+    )
+    .await
+    .unwrap();
     let current = events.lock().unwrap().clone();
-    assert_eq!(current.iter().filter(|event| *event == "capture-identity:9229").count(), 1);
+    assert_eq!(
+        current
+            .iter()
+            .filter(|event| *event == "capture-identity:9229")
+            .count(),
+        1
+    );
     assert!(!current.iter().any(|event| event.starts_with("inject:")));
     assert!(current.iter().any(|event| event == "start-helper:57321"));
-    assert!(!current.iter().any(|event| event.starts_with("shutdown-helper:")));
+    assert!(
+        !current
+            .iter()
+            .any(|event| event.starts_with("shutdown-helper:"))
+    );
     handle.wait_for_codex_exit().await.unwrap();
 }
 
@@ -2329,6 +2723,7 @@ async fn launch_exit_saves_failed_terminal_state_with_complete_error_chain() {
             debug_port: 9229,
             helper_port: 57321,
             status_store: StatusStore::new(temp.path().join("latest-status.json")),
+            ..Default::default()
         },
         &hooks,
     )
@@ -2569,6 +2964,7 @@ impl LaunchHooks for FakeHooks {
         debug_port: u16,
         _settings: &BackendSettings,
         extra_args: &[String],
+        _instance: &codex_plus_core::launcher::LaunchInstance,
     ) -> anyhow::Result<CodexLaunch> {
         assert!(app_dir.ends_with("Codex.app"));
         let launch_detail = if extra_args.is_empty() {
@@ -2594,6 +2990,11 @@ impl LaunchHooks for FakeHooks {
     async fn ensure_injection(&self, debug_port: u16, helper_port: u16, _app_dir: &Path) -> bool {
         self.event(format!("inject:{debug_port}:{helper_port}"));
         self.inject_error.is_none()
+    }
+
+    async fn apply_native_fast_unlock_on_launch(&self, debug_port: u16) -> anyhow::Result<()> {
+        self.event(format!("native-fast:{debug_port}"));
+        Ok(())
     }
 
     async fn capture_injected_launch_identity(&self, debug_port: u16) {
@@ -2622,14 +3023,18 @@ impl LaunchHooks for FakeHooks {
     ) -> anyhow::Result<()> {
         self.event("wait-codex");
         if self.record_identity_capture {
-            assert!(*self.captured_launch_identity.lock().unwrap(), "monitoring must use the launch identity even after injection failure");
+            assert!(
+                *self.captured_launch_identity.lock().unwrap(),
+                "monitoring must use the launch identity even after injection failure"
+            );
         }
         if let Some(exit) = &self.wait_until_exit {
             exit.notified().await;
         }
         if self.wait_error {
-            return Err(anyhow::anyhow!("native process handle failed")
-                .context("monitoring Codex process"));
+            return Err(
+                anyhow::anyhow!("native process handle failed").context("monitoring Codex process")
+            );
         }
         Ok(())
     }

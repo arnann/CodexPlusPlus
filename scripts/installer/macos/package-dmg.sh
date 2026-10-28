@@ -8,7 +8,9 @@ DIST="$ROOT/dist/macos"
 STAGE="$DIST/stage"
 BINARY_DIR="${BINARY_DIR:-$ROOT/target/release}"
 DMG="$DIST/CodexPlusPlus-${VERSION}-macos-${ARCH}.dmg"
-ICON_SOURCE="$ROOT/apps/codex-plus-manager/src-tauri/icons/icon.png"
+# macOS 用带圆角方形底的版本：macOS 26 会把不是标准圆角方形的图标放进一块灰色底板。没有时退回通用图标。
+ICON_SOURCE="$ROOT/apps/codex-plus-manager/src-tauri/icons/icon-macos.png"
+[ -f "$ICON_SOURCE" ] || ICON_SOURCE="$ROOT/apps/codex-plus-manager/src-tauri/icons/icon.png"
 ICON_NAME="codex-plus-plus.icns"
 ICON_ICNS="$DIST/$ICON_NAME"
 BACKGROUND_SOURCE="$ROOT/assets/installer/macos/dmg-background.svg"
@@ -75,7 +77,7 @@ create_app() {
   cp "$ICON_ICNS" "$app_dir/Contents/Resources/$ICON_NAME"
   chmod +x "$app_dir/Contents/MacOS/$executable_name"
   printf 'APPL????' > "$app_dir/Contents/PkgInfo"
-  if [ "$executable_name" = "CodexPlusPlusManager" ]; then
+  if [ "$executable_name" = "CodexPlusPlus" ]; then
     url_types='  <key>CFBundleURLTypes</key>
   <array>
     <dict>
@@ -108,6 +110,8 @@ create_app() {
   <string>6.0</string>
   <key>CFBundlePackageType</key>
   <string>APPL</string>
+  <key>CodexPlusUnifiedApp</key>
+  <true/>
   <key>CFBundleSignature</key>
   <string>????</string>
   <key>CFBundleExecutable</key>
@@ -132,6 +136,9 @@ SIGNING_IDENTITY="${MACOS_SIGNING_IDENTITY:-}"
 # 公证凭据 profile（notarytool store-credentials 存的那个名字）。
 # 设为空则跳过公证，只签名。
 NOTARY_PROFILE="${MACOS_NOTARY_PROFILE:-}"
+# 正式（Developer ID + hardened runtime）签名用的 entitlements（文件存在时才带）。
+# 注意：plist 里不要写 XML 注释——AMFI 解析器很严格，注释里出现 "--" 就会报
+# "AMFIUnserializeXML: syntax error"，说明一律写在这里。
 ENTITLEMENTS="$ROOT/scripts/installer/macos/entitlements.plist"
 
 # 签名参数必须用数组装：身份串里含空格
@@ -157,7 +164,8 @@ sign_app() {
     extra=(--entitlements "$ENTITLEMENTS")
   fi
   codesign --force "${SIGN_ARGS[@]}" ${extra[@]+"${extra[@]}"} "$app_dir/Contents/MacOS/$executable"
-  codesign --force "${SIGN_ARGS[@]}" "$app_dir"
+  # bundle 签名会重签主可执行文件，这里不带 entitlements 会把上一步的冲掉。
+  codesign --force "${SIGN_ARGS[@]}" ${extra[@]+"${extra[@]}"} "$app_dir"
 }
 
 sign_dmg() {
@@ -226,14 +234,20 @@ verify_app() {
 
 prepare_icon
 prepare_background
-create_app "Codex++" "CodexPlusPlus" "$BINARY_DIR/codex-plus-plus" "com.bigpizzav3.codexplusplus" "true"
-create_app "Codex++ 管理工具" "CodexPlusPlusManager" "$BINARY_DIR/codex-plus-plus-manager" "com.bigpizzav3.codexplusplus.manager" "false"
+create_app "Codex++" "CodexPlusPlus" "$BINARY_DIR/codex-plus-plus" "com.bigpizzav3.codexplusplus" "false"
+# 旧版 1.7.x 更新器要求第二个 manager bundle。它使用独立的小型兼容壳，
+# 启动后立即退出；新版启动主 app 后会把这个壳归档到 legacy-migrations。
+create_app "Codex++ 管理工具" "CodexPlusPlusManager" "$BINARY_DIR/codex-plus-legacy-shim" "com.bigpizzav3.codexplusplus.manager" "true"
 
 sign_app "$STAGE/Codex++.app"
 sign_app "$STAGE/Codex++ 管理工具.app"
 
 verify_app "$STAGE/Codex++.app"
 verify_app "$STAGE/Codex++ 管理工具.app"
+
+# Finder 隐藏兼容壳；旧更新器按精确路径读取它，不能改名或放入子目录。
+printf '%s\n' "Codex++ 管理工具.app" > "$STAGE/.hidden"
+chflags hidden "$STAGE/Codex++ 管理工具.app"
 
 ln -s /Applications "$STAGE/Applications"
 
@@ -366,8 +380,8 @@ with timeout of 30 seconds
 
     tell dmgDisk
       set position of item "Applications" to {1000, 390}
-      set position of item "Codex++.app" to {220, 390}
-      set position of item "Codex++ 管理工具.app" to {460, 390}
+      set position of item "Codex++.app" to {460, 390}
+      set visible of item "Codex++ 管理工具.app" to false
     end tell
 
     close dmgWindow

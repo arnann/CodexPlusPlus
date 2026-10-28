@@ -39,7 +39,7 @@ function fixture(stored = new Map<string, string>(), storageFails = false) {
 
 test("model configuration is open by default while vendor folds use stable identifiers", () => {
   assert.ok(/className="relay-config-section relay-model-settings"[^>]*defaultOpen/.test(source));
-  for (const section of ["models", "requests", "channel-protection", "advanced", "config-preview", "common-config", "auth-preview"]) {
+  for (const section of ["models", "requests", "advanced", "config-preview", "common-config", "auth-preview"]) {
     assert.ok(source.includes(`sectionId="${section}"`), section);
   }
 });
@@ -83,8 +83,6 @@ test("corrupt fold preferences use section defaults and do not affect other sect
 test("new sharing and protocol hint strings have English translations", () => {
   const dictionary = readFileSync(new URL("./i18n-en.ts", import.meta.url), "utf8");
   for (const key of [
-    "分享会话按钮",
-    "在当前会话工具栏显示分享按钮，保存后更新显示，无需重启 Codex。",
     "若网关提示 thinking type: adaptive 无效，可启用此项后重试；这会停用厂商私有推理参数。",
   ]) {
     assert.ok(source.includes(`t(${JSON.stringify(key)})`), key);

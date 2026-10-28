@@ -1,3 +1,11 @@
+  window.__codexPlusScanScheduleCleanup?.();
+  clearTimeout(window.__codexSessionDeleteScanTimer);
+  cancelAnimationFrame(window.__codexSessionDeleteDeferredRaf);
+  window.__codexSessionDeleteScanTimer = null;
+  window.__codexSessionDeleteDeferredRaf = 0;
+  window.__codexSessionDeleteScanPending = false;
+  window.__codexSessionDeleteDeferredPending = false;
+
   /**
    * 这个节点是不是 Codex++ 自己（或拓展）的 UI。
    *
@@ -7,7 +15,7 @@
    */
   function isExtensionUiNode(node) {
     if (!node?.closest) return false;
-    if (node.closest(`.codex-delete-toast, .codex-delete-confirm-overlay, .codex-plus-modal-overlay, .${codexPlusPageClass}, #${codexPlusSidebarNavId}, #${codexPlusRailNavId}, #${codexPlusRailExtensionsId}, #${codexPlusRailSponsorId}, #${codexPlusRailNavId} > button, #${codexPlusRailExtensionsId} > button, #${codexPlusRailSponsorId} > button, .${codexServiceTierBadgeClass}, .${sessionShareButtonClass}, .${sessionCopyMenuItemClass}, #codex-plus-menu`)) {
+    if (node.closest(`[data-codex-plus-ext], .codex-delete-toast, .codex-delete-confirm-overlay, .codex-plus-modal-overlay, .${codexPlusPageClass}, #${codexPlusSidebarNavId}, #${codexPlusRailNavId}, #${codexPlusRailExtensionsId}, #${codexPlusRailSponsorId}, #${codexPlusRailNavId} > button, #${codexPlusRailExtensionsId} > button, #${codexPlusRailSponsorId} > button, .${codexServiceTierBadgeClass}, .${sessionShareButtonClass}, .codex-zed-remote-button, .codex-zed-remote-toast, #codex-plus-menu, #${capacityAutoRetryChipId}`)) {
       return true;
     }
     return isCodexPlusExtensionNode(node);
@@ -22,6 +30,7 @@
       "[data-codex-archive-delete-all]",
       '[data-message-author-role]',
       '[data-testid="conversation-turn"]',
+      '[data-tab-id^="sidechat:"]',
       '[class*="user-message"]',
       '[class*="UserMessage"]',
       ".composer-footer",
@@ -38,8 +47,7 @@
     if (node.nodeType !== 1) return false;
     if (isExtensionUiNode(node)) return false;
     const relevantSelector = scanRelevantSelector();
-    return !!node.matches?.(relevantSelector) ||
-      !!node.closest?.(relevantSelector) ||
+    return !!node.closest?.(relevantSelector) ||
       nodeOrAncestorLooksLikeCodexUserBubble(node);
   }
 
@@ -75,19 +83,61 @@
   }
 
   function runScheduledScan() {
-    window.__codexSessionDeleteScanPending = false;
     clearTimeout(window.__codexSessionDeleteScanTimer);
     window.__codexSessionDeleteScanTimer = null;
+    if (document.hidden) {
+      window.__codexSessionDeleteScanPending = true;
+      return;
+    }
+    window.__codexSessionDeleteScanPending = false;
     scan();
   }
 
+  function scheduleDeferredScan() {
+    window.__codexSessionDeleteDeferredPending = true;
+    if (document.hidden || window.__codexSessionDeleteDeferredRaf) return;
+    window.__codexSessionDeleteDeferredRaf = requestAnimationFrame(() => {
+      window.__codexSessionDeleteDeferredRaf = 0;
+      if (document.hidden) return;
+      window.__codexSessionDeleteDeferredPending = false;
+      runScanStep(scanDeferred);
+    });
+  }
+
   function scheduleScan(mutations) {
+    // 隐藏页面和已排队的扫描也要清理，不能让孤立菜单等待下一次可见扫描。
+    const sessionActionsNeedScan = pruneRemovedSessionActions(mutations);
     window.__codexSessionDeleteLastMutations = mutations;
-    if (!shouldScheduleScan(mutations)) return;
     if (window.__codexSessionDeleteScanPending) return;
+    // 原生页面可能只移除带归属标记的按钮组；所属行仍在时需要补回操作入口。
+    if (!sessionActionsNeedScan && !shouldScheduleScan(mutations)) return;
     window.__codexSessionDeleteScanPending = true;
+    if (document.hidden) return;
     window.__codexSessionDeleteScanTimer = setTimeout(runScheduledScan, 200);
   }
+
+  const onScanVisibilityChange = () => {
+    if (document.hidden) {
+      clearTimeout(window.__codexSessionDeleteScanTimer);
+      window.__codexSessionDeleteScanTimer = null;
+      cancelAnimationFrame(window.__codexSessionDeleteDeferredRaf);
+      window.__codexSessionDeleteDeferredRaf = 0;
+      return;
+    }
+    // Hidden mutations describe one current DOM, not a history to replay.
+    if (window.__codexSessionDeleteScanPending) {
+      clearTimeout(window.__codexSessionDeleteScanTimer);
+      window.__codexSessionDeleteScanTimer = setTimeout(runScheduledScan, 0);
+    } else if (window.__codexSessionDeleteDeferredPending) scheduleDeferredScan();
+  };
+  document.addEventListener("visibilitychange", onScanVisibilityChange);
+  window.__codexPlusScanScheduleCleanup = () => {
+    document.removeEventListener("visibilitychange", onScanVisibilityChange);
+    clearTimeout(window.__codexSessionDeleteScanTimer);
+    cancelAnimationFrame(window.__codexSessionDeleteDeferredRaf);
+    window.__codexSessionDeleteScanPending = false;
+    window.__codexSessionDeleteDeferredPending = false;
+  };
 
   /**
    * 侧边栏入口的启动补扫。

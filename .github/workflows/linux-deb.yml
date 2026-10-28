@@ -29,6 +29,7 @@ jobs:
         run: |
           apt-get update
           apt-get install -y \
+            binutils \
             build-essential \
             ca-certificates \
             curl \
@@ -74,9 +75,10 @@ jobs:
         run: |
           cargo test -p codex-plus-core --test launcher app_paths_ -- --test-threads=1
           cargo test -p codex-plus-core --test watcher linux_codex_process_scan
+          cargo test -p codex-plus-core --test linux_package
 
       - name: Build release binaries
-        run: cargo build --release
+        run: cargo build --release -p codex-plus-manager --bin codex-plus-plus
 
       - name: Build Deepin package
         env:
@@ -91,6 +93,14 @@ jobs:
             VERSION="$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -n 1)+deepin.${GITHUB_RUN_NUMBER}"
           fi
           bash scripts/installer/linux/package-deb.sh "$VERSION" amd64
+
+      - name: Verify runtime libraries
+        shell: bash
+        run: |
+          ldd target/release/codex-plus-plus | tee /tmp/codex-plus-plus-ldd.txt
+          if grep -q 'not found' /tmp/codex-plus-plus-ldd.txt; then
+            exit 1
+          fi
 
       - name: Upload Deepin package artifact
         uses: actions/upload-artifact@v4

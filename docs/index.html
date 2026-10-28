@@ -201,11 +201,31 @@
 
             <article class="feature-card feature-ink" data-reveal>
               <span class="feature-index">06</span>
-              <h3>用量可见，也有陪伴</h3>
-              <p>用量挂件、可更换的桌宠角色、任务状态和预算提醒，搭配皮肤与自定义图片。</p>
+              <h3>Agent 桌宠，工作也有陪伴</h3>
+              <p>在 Codex 里放一只桌宠，点一下会压扁并播放音效；图片从内置图库挑选或换成自己的。</p>
               <ul>
-                <li>开发预览 · 默认关闭</li>
-                <li>拖动、缩放与更换角色图片</li>
+                <li>默认关闭 · 目前支持 Codex</li>
+                <li>拖动、缩放与更换图片</li>
+              </ul>
+            </article>
+
+            <article class="feature-card feature-blue" data-reveal>
+              <span class="feature-index">07</span>
+              <h3>多开互不打扰</h3>
+              <p>为每个供应商身份启动相互隔离的 Codex 实例：独立配置、会话和用户数据目录，可与其他单一供应商同时运行。</p>
+              <ul>
+                <li>主 Codex 与多开实例集中列出</li>
+                <li>单独重启或结束，不共享会话</li>
+              </ul>
+            </article>
+
+            <article class="feature-card feature-coral" data-reveal>
+              <span class="feature-index">08</span>
+              <h3>用量状态栏</h3>
+              <p>输入框下方实时显示生成速度、缓存命中率与上下文占用，数据取自本机 Codex 会话记录，口径与 Codex 一致。</p>
+              <ul>
+                <li>上下文占比按每模型窗口计算</li>
+                <li>默认开启，可在管理器关闭</li>
               </ul>
             </article>
           </div>
@@ -262,6 +282,32 @@
                 <span>发现、安装和管理工作流工具</span>
               </figcaption>
             </figure>
+            <figure data-reveal style="grid-column: 1 / -1">
+              <img
+                src="images/usage-statusline.png"
+                alt="输入框下方的用量状态栏：51 tok/s、缓存命中 99.9%、上下文占用 19%"
+                width="1576"
+                height="270"
+                loading="lazy"
+              >
+              <figcaption>
+                <strong>用量状态栏</strong>
+                <span>生成速度、缓存命中与上下文占用，输入框下方一目了然</span>
+              </figcaption>
+            </figure>
+            <figure data-reveal style="grid-column: 1 / -1">
+              <img
+                src="images/codex-multi-launch.png"
+                alt="Codex 多开：列出运行中的 DeepSeek 与 Zhipu GLM 实例，可单独重启或结束"
+                width="1656"
+                height="756"
+                loading="lazy"
+              >
+              <figcaption>
+                <strong>Codex 多开</strong>
+                <span>每个供应商身份一个隔离实例，可单独重启或结束</span>
+              </figcaption>
+            </figure>
           </div>
           <p class="section-note" data-reveal>
             <span>这里的「拓展」是 Codex++ 用户脚本，与 Codex 官方插件市场是两个入口。社区脚本的服务配置和使用要求以各自说明为准。</span>
@@ -269,19 +315,6 @@
           </p>
 
           <div class="showcase-personal">
-            <figure data-reveal>
-              <img
-                src="images/readme-preview/usage-widget.png"
-                alt="角色用量挂件：气泡显示 Token 统计和运行状态"
-                width="758"
-                height="602"
-                loading="lazy"
-              >
-              <figcaption>
-                <strong>用量挂件与桌宠 · 开发预览</strong>
-                <span>查看本地会话 Token 与任务状态</span>
-              </figcaption>
-            </figure>
             <figure data-reveal>
               <img
                 src="images/readme-preview/typing-effects.png"
@@ -297,10 +330,8 @@
             </figure>
           </div>
           <p class="section-note" data-reveal>
-            <span>挂件与桌宠截图来自开发版本，正式发布后的开启方式与统计口径以版本说明为准。</span>
-            <a href="https://github.com/BigPizzaV3/CodexPlusPlus/blob/main/docs/whale-widget.md" target="_blank" rel="noreferrer">用量挂件说明 ↗</a>
-            <span>原始功能、鲸鱼角色及内置素材来自</span>
-            <a href="https://github.com/MeteorNOX/DeepSeek-Balance-Whale-Widget" target="_blank" rel="noreferrer">MeteorNOX/DeepSeek-Balance-Whale-Widget</a>。
+            <span>Agent 桌宠的图片在运行时联网拉取并缓存在本机，不随应用打包。</span>
+            <a href="https://github.com/BigPizzaV3/CodexPlusPlus/blob/main/docs/agent-pet.md" target="_blank" rel="noreferrer">Agent 桌宠说明 ↗</a>
           </p>
         </div>
       </section>
@@ -371,6 +402,19 @@
             <pre aria-label="模型列表窗口后缀示例"><code>deepseek-v4-pro[1M]
 your-model[200K]
 another-model[128000]</code></pre>
+          </div>
+          <div class="model-example model-picker" data-reveal>
+            <div>
+              <h3>聚合模型的「分组折叠」选择器</h3>
+              <p>模型聚合会把多个成员的模型合进同一份目录。原生模型选择器按供应商折叠成组：表头显示供应商名与模型数量，默认成员带「默认」标志；右上角可「全部展开 / 全部折叠」，折叠状态按供应商记忆，打开时自动展开当前选中模型所在的分组。单供应商保持原生列表不动。</p>
+            </div>
+            <img
+              src="images/readme-preview/model-picker-groups.png"
+              alt="Codex 原生模型选择器按供应商分组折叠：供应商 4（默认，7 个模型）与 DeepSeek（2 个模型）"
+              width="584"
+              height="658"
+              loading="lazy"
+            >
           </div>
         </div>
       </section>
@@ -548,7 +592,7 @@ another-model[128000]</code></pre>
             <h3 id="sponsors-title" data-reveal>感谢赞助商</h3>
             <p class="section-note" data-reveal>感谢以下赞助商对项目的支持。服务范围、价格与活动以各平台官网说明为准。</p>
             <div class="sponsor-source" data-reveal>
-              <a href="https://github.com/BigPizzaV3/Ad-List/blob/main/ads.json" target="_blank" rel="noreferrer">赞助商列表自动更新 · 查看来源 ↗</a>
+              <a href="https://ads.codexpp.cc/ads.json" target="_blank" rel="noreferrer">赞助商列表自动更新 · 查看来源 ↗</a>
               <button type="button" data-sponsor-retry hidden>重新加载</button>
             </div>
             <p class="section-note" role="status" aria-live="polite" data-sponsor-status hidden>赞助商列表加载中…</p>

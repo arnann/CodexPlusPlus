@@ -7,10 +7,15 @@ const root = `${__dirname}/renderer-inject`;
 const adapter = readFileSync(`${root}/62-plugin-market-adapter.js`, "utf8");
 const model = readFileSync(`${root}/70-model-catalog.js`, "utf8");
 const native = readFileSync(`${root}/60-plugin-marketplace.js`, "utf8");
+const serviceTier = readFileSync(`${root}/30-service-tier.js`, "utf8");
+const sessionConnection = serviceTier.slice(serviceTier.indexOf("  function codexManagedSessionConnection("),
+  serviceTier.indexOf("  function codexRemoteSessionStartedThreadId("));
 const methodFunction = model.slice(model.indexOf("  function appServerModelRequestMethod("), model.indexOf("  function patchAppServerModelResult("));
 const clientPatch = native.slice(native.indexOf("  function patchPluginMarketplaceRequestClient("), native.indexOf("  function patchPluginMarketplaceRequestMessage("));
 const transportPatch = native.slice(native.indexOf("  function installPluginMarketplaceBridgePatch("), native.indexOf("  const pluginMarketplaceRequestPatchMaxMisses"));
 const prototypePatch = model.slice(model.indexOf("    function installCodexAppServerClientPrototypePatch("), model.indexOf("  const appServerModelRequestPatchMaxMisses"));
+// 原型补丁里经旁支保存（#2660）包装原生请求；辅助函数定义在截取范围外，需要一并带上。
+const sideChatSend = model.slice(model.indexOf("  function sendAppServerRequestWithSideChat("), model.indexOf("  // issue #2177："));
 const flush = async () => { await new Promise((resolve) => setImmediate(resolve)); await new Promise((resolve) => setImmediate(resolve)); };
 const sentinel = (source = "public") => `/fixture/.tmp/codex-plus-plugin-market/virtual-${source}/.agents/plugins/marketplace.json`;
 const managedSummary = { name: "sample", id: "sample@codex-plus-plugin-market-123456789abc", codexPlusIndexId: "original-id", installed: false };
@@ -38,6 +43,8 @@ function fixture(handler, { enabled = true } = {}) {
     window, MessageEvent, Error, console, Date,
     codexPlusIsWindowsPlatform: false, codexAppServerModelRequestPatchVersion: "11", codexPluginMarketplaceUnlockVersion: "17",
     codexPlusBackendSettingsLoaded: true,
+    codexPlusBackendSettings: {},
+    codexRemoteSessionActiveProfile: () => null,
     setTimeout: (callback, delay) => { const id = ++timerId; timers.set(id, { callback, delay }); return id; },
     clearTimeout: (id) => timers.delete(id),
     codexPluginMarketplacePatchEnabled: () => enabled,
@@ -69,7 +76,7 @@ function fixture(handler, { enabled = true } = {}) {
       throw new Error(`Unexpected request: ${path}`);
     },
   });
-  vm.runInContext(`${methodFunction}\n${adapter}\n${clientPatch}\n${transportPatch}\n${prototypePatch}\nglobalThis.api = {
+  vm.runInContext(`${methodFunction}\n${sessionConnection}\n${adapter}\n${clientPatch}\n${transportPatch}\n${sideChatSend}\n${prototypePatch}\nglobalThis.api = {
     intercept: codexPlusPluginNativeInterceptClient, operation: codexPlusPluginNativeOperation,
     outgoing: codexPlusPluginNativeInterceptOutgoing, incoming: codexPlusPluginNativeInterceptIncoming,
     patchClient: patchPluginMarketplaceRequestClient, patchBridge: installPluginMarketplaceBridgePatch,
@@ -233,6 +240,23 @@ test("捕获原型 client 以及嵌套send-cli请求也接管；多层适配不�
   assert.equal(f.api.normalize("send-cli-request-for-host", { method: "plugin/installed", params: {} }), "installed-plugins");
 });
 
+test("未启用聚合保护时，模型与插件原型包装共同保留原生请求", async () => {
+  const f = fixture();
+  f.window.__codexPlusAppServerClientClass = f.context.NativeClient;
+  assert.equal(f.api.patchPrototype(), true);
+  const client = new f.context.NativeClient();
+  f.api.patchClient(client);
+  const modelParams = { includeHidden: false };
+  const turnParams = { threadId: "fixture-thread", model: "fixture-model", input: [] };
+  await client.sendRequest("model/list", modelParams);
+  await client.sendRequest("turn/start", turnParams);
+  assert.deepEqual(client.calls, [
+    { method: "model/list", params: modelParams },
+    { method: "turn/start", params: turnParams },
+  ]);
+  assert.equal(f.calls.length, 0, "无关请求不访问插件索引");
+});
+
 test("fetch JSONRPC封装、原生非鉴权错误和无关message分别保留", async () => {
   const f = fixture(); f.api.patchBridge();
   await f.window.electronBridge.sendMessageFromView({ type: "fetch", url: "vscode://codex/list-plugins", requestId: "rpc", body: "{}" });
@@ -263,4 +287,34 @@ test("已有旧版桥接wrapper的当前窗口重新注入后也先截获托管�
   const original = f.window.electronBridge.sendMessageFromView;
   f.api.patchBridge();
   assert.equal(f.window.electronBridge.sendMessageFromView, original, "scans must not accumulate wrappers");
+});
+
+test("配置读取超时与插件传输同时安装时只取消读取并透传原生错误", async () => {
+  for (const guardFirst of [true, false]) {
+    const f = fixture();
+    f.window.setTimeout = f.context.setTimeout;
+    f.window.clearTimeout = f.context.clearTimeout;
+    const installGuard = () => vm.runInContext(
+      readFileSync(`${root}/31-config-read-deadline.js`, "utf8") + "\ninstallCodexConfigReadDeadline();", f.context);
+    if (guardFirst) installGuard();
+    f.api.patchBridge();
+    if (!guardFirst) installGuard();
+    const config = { type: "fetch", method: "POST", requestId: "config",
+      url: "vscode://codex/mcp-codex-config", body: '{"cwd":"/fixture"}' };
+    await f.window.electronBridge.sendMessageFromView(config);
+    f.outboundEvent(config, true);
+    const turn = { type: "mcp-request", request: { id: "turn", method: "turn/start", params: {} } };
+    await f.window.electronBridge.sendMessageFromView(turn);
+    f.outboundEvent(turn, true);
+    const [timerId, timer] = [...f.timers].find(([, timer]) => timer.delay === 15_000);
+    f.timers.delete(timerId);
+    timer.callback();
+    await flush();
+    const replies = f.delivered.filter((event) => event.data?.requestId === "config");
+    assert.equal(replies.length, 1);
+    assert.equal(replies[0].data.responseType, "error");
+    assert.equal(replies[0].data.status, 408);
+    assert.deepEqual(f.originalMessages.map(({ type }) => type), ["fetch", "mcp-request", "cancel-fetch"]);
+    assert.equal(f.calls.length, 0, "不访问插件索引或重发用户请求");
+  }
 });

@@ -7,9 +7,10 @@ use codex_plus_core::launcher::{
 use codex_plus_core::models::{DeleteResult, DeleteStatus, ExportResult, ExportStatus, SessionRef};
 use codex_plus_core::routes::{
     BridgeContext, BridgeDataService, BridgeRuntimeService, BridgeSettingsService,
-    CoreRuntimeService, handle_bridge_request,
+    CoreRuntimeService, evaluate_extension_cdp, handle_bridge_request,
 };
-use codex_plus_core::settings::BackendSettings;
+use codex_plus_core::agent_pet;
+use codex_plus_core::settings::{AgentPetSettings, BackendSettings};
 use codex_plus_core::status::StatusStore;
 use codex_plus_core::user_scripts::UserScriptManager;
 use serde_json::{Value, json};
@@ -21,6 +22,7 @@ async fn bridge_routes_cover_all_current_paths() {
     let cases = [
         ("/settings/get", json!({})),
         ("/settings/set", json!({"providerSyncEnabled": true})),
+        ("/settings/catalog", json!({})),
         ("/user-scripts/list", json!({})),
         ("/user-scripts/set-enabled", json!({"enabled": false})),
         (
@@ -30,14 +32,13 @@ async fn bridge_routes_cover_all_current_paths() {
         ("/user-scripts/delete", json!({"key": "user:a.js"})),
         ("/user-scripts/reload", json!({})),
         ("/user-scripts/load", json!({})),
+        ("/cdp/targets", json!({})),
+        ("/cdp/evaluate", json!({"kind":"avatar-overlay","expression":"1"})),
         ("/devtools/open", json!({})),
         ("/manager/open", json!({})),
         ("/manager/open-transient", json!({})),
         ("/backend/status", json!({})),
-        ("/whale/balance", json!({})),
-        ("/whale/session", json!({"session_id": "s1"})),
-        ("/whale/history", json!({})),
-        ("/whale/full", json!({"path":"/dsh-whale/size.json"})),
+        ("/agent-pet/image", json!({})),
         ("/codex-model-catalog", json!({})),
         ("/codex-config-model", json!({})),
         (
@@ -70,12 +71,8 @@ async fn bridge_routes_cover_all_current_paths() {
             json!({"session_id": "s1", "title": "First"}),
         ),
         (
-            "/session/export",
+            "/thread-usage-live",
             json!({"session_id": "s1", "title": "First"}),
-        ),
-        (
-            "/session/import",
-            json!({"kind": "codex-rollout", "session_id": "s1", "content": "{}"}),
         ),
         ("/archived-thread", json!({"title": "Archived"})),
     ];
@@ -90,82 +87,116 @@ async fn bridge_routes_cover_all_current_paths() {
 }
 
 #[tokio::test]
-async fn whale_routes_require_both_enhancements_and_widget_switch() {
-    for (enhancements, widget) in [(false, true), (true, false), (false, false)] {
-        let settings = BackendSettings {
-            enhancements_enabled: enhancements,
-            codex_app_whale_widget_enabled: widget,
-            ..BackendSettings::default()
-        };
-        let ctx = BridgeContext::new(
-            Arc::new(FakeSettings::with_settings(settings)),
-            Arc::new(FakeRuntime::default()),
-            Arc::new(FakeData),
-        );
-        for route in ["/whale/balance", "/whale/session", "/whale/history"] {
-            let result =
-                handle_bridge_request(ctx.clone(), route, json!({"session_id":"s1"})).await;
-            assert_eq!(result["status"], "disabled", "{route}");
-        }
-        let result = handle_bridge_request(
-            ctx,
-            "/whale/full",
-            json!({"path":"/dsh-whale/size.json","method":"PUT","body":{"scale":1.5}}),
-        )
-        .await;
-        assert_eq!(result["status"], 403);
-    }
-    let settings = BackendSettings {
-        codex_app_whale_widget_enabled: true,
-        ..BackendSettings::default()
-    };
-    let ctx = BridgeContext::new(
-        Arc::new(FakeSettings::with_settings(settings)),
-        Arc::new(FakeRuntime::default()),
-        Arc::new(FakeData),
+async fn cdp_evaluate_rejects_empty_expression_without_touching_cdp() {
+    let error = evaluate_extension_cdp(1, &json!({"kind": "avatar-overlay"}))
+        .await
+        .unwrap_err();
+    assert!(
+        error.to_string().contains("expression"),
+        "{error}"
     );
-    let result =
-        handle_bridge_request(ctx.clone(), "/whale/session", json!({"session_id":"s1"})).await;
-    assert_eq!(result["status"], "ok");
-    assert_eq!(result["sessionId"], "s1");
-    let result = handle_bridge_request(ctx, "/whale/balance", json!({})).await;
-    assert_eq!(result["status"], "unsupported");
-    assert!(result["balances"].as_array().unwrap().is_empty());
 }
 
 #[tokio::test]
-async fn whale_local_statistics_toggle_stops_both_current_and_machine_log_routes() {
+async fn cdp_routes_are_wired_for_extensions() {
+    let result = handle_bridge_request(test_context(), "/cdp/targets", json!({})).await;
+    assert_eq!(result["status"], "failed");
+    assert_ne!(result["message"], "Unknown bridge path");
+    assert!(
+        result["message"].as_str().unwrap_or("").contains("CDP targets"),
+        "{}",
+        result
+    );
+}
+
+#[tokio::test]
+async fn thread_usage_live_route_returns_recent_token_events() {
+    // 内置状态栏走的就是这条路由；它必须与 /thread-usage-history 分开，
+    // 因为状态栏按秒级轮询，拿不动全量历史。
+    let result = handle_bridge_request(
+        test_context(),
+        "/thread-usage-live",
+        json!({"session_id": "s1", "title": "First"}),
+    )
+    .await;
+    assert_eq!(result["status"], "ok");
+    assert_eq!(result["session_id"], "s1");
+    assert_eq!(result["events"][0]["cached_input_tokens"], json!(900));
+    assert_eq!(result["events"][0]["context_window"], json!(258400));
+}
+
+fn agent_pet_context(pet: AgentPetSettings) -> (BridgeContext, std::path::PathBuf) {
     let service = Arc::new(FakeSettings::with_settings(BackendSettings {
-        codex_app_whale_widget_enabled: true,
+        agent_pet: pet,
         ..BackendSettings::default()
     }));
-    let path = service.whale_ledger_path();
+    let cache_dir = service.agent_pet_cache_dir();
     let ctx = BridgeContext::new(
         service,
         Arc::new(FakeRuntime::default()),
         Arc::new(FakeData),
     );
-    let history = handle_bridge_request(ctx.clone(), "/whale/history", json!({})).await;
-    assert_eq!(history["status"], "ok");
-    let result = handle_bridge_request(
-        ctx.clone(),
-        "/whale/full",
-        json!({"path":"/dsh-whale/size.json","method":"PUT","body":{"codexStatsOn":false}}),
-    )
-    .await;
-    assert_eq!(result["status"], 200);
-    assert!(path.exists());
-    for route in ["/whale/session", "/whale/history"] {
-        let result = handle_bridge_request(ctx.clone(), route, json!({"session_id":"s1"})).await;
-        assert_eq!(result["status"], "disabled");
+    (ctx, cache_dir)
+}
+
+#[tokio::test]
+async fn agent_pet_image_is_disabled_until_enabled_for_codex() {
+    for pet in [
+        AgentPetSettings::default(),
+        AgentPetSettings {
+            enabled: true,
+            agents: Vec::new(),
+            ..AgentPetSettings::default()
+        },
+    ] {
+        let (ctx, _) = agent_pet_context(pet);
+        let result = handle_bridge_request(ctx, "/agent-pet/image", json!({})).await;
+        assert_eq!(result, json!({"status": "disabled"}));
     }
-    let result = handle_bridge_request(
-        ctx,
-        "/whale/full",
-        json!({"path":"/dsh-whale/api-models.json"}),
+}
+
+#[tokio::test]
+async fn agent_pet_image_returns_cached_data_uri_without_network() {
+    let (ctx, cache_dir) = agent_pet_context(AgentPetSettings {
+        enabled: true,
+        image: "fox".into(),
+        ..AgentPetSettings::default()
+    });
+    // 预先放好缓存：路由命中缓存就不会联网。
+    let png = b"\x89PNG\r\n\x1a\n\0\0\0\rIHDR";
+    let url = agent_pet::builtin_image_url("fox", agent_pet::CDN_HOSTS[0]).unwrap();
+    std::fs::create_dir_all(&cache_dir).unwrap();
+    std::fs::write(
+        cache_dir.join(agent_pet::cache_file_name(&url, agent_pet::ImageKind::Png)),
+        png,
     )
-    .await;
-    assert_eq!(result["body"]["codexStatsOn"], false);
+    .unwrap();
+    // payload 被忽略，图片只按当前设置选择。
+    let result = handle_bridge_request(ctx, "/agent-pet/image", json!({"image": "cat"})).await;
+    assert_eq!(result["status"], "ok", "{result}");
+    assert_eq!(result["id"], "fox");
+    assert!(
+        result["image"]
+            .as_str()
+            .unwrap()
+            .starts_with("data:image/png;base64,")
+    );
+}
+
+#[tokio::test]
+async fn agent_pet_image_reports_invalid_custom_url() {
+    let (ctx, _) = agent_pet_context(AgentPetSettings {
+        enabled: true,
+        image: "custom".into(),
+        custom_image_url: "http://example.com/pet.png".into(),
+        ..AgentPetSettings::default()
+    });
+    let result = handle_bridge_request(ctx, "/agent-pet/image", json!({})).await;
+    assert_eq!(result["status"], "failed");
+    assert!(
+        result["message"].as_str().unwrap().contains("https://"),
+        "{result}"
+    );
 }
 
 #[tokio::test]
@@ -224,6 +255,63 @@ async fn llm_proxy_rejects_non_post_methods() {
 
     assert_eq!(result["status"], json!("failed"));
     assert_eq!(result["message"], json!("LLM Bridge 仅支持 POST 请求"));
+}
+
+fn enhancement_settings_catalog_file() -> Value {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("assets")
+        .join("enhancement-settings.json");
+    serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap()
+}
+
+#[tokio::test]
+async fn settings_catalog_route_returns_the_single_catalog_file() {
+    // 注入页的设置行只从这条路由取文案；返回的必须就是管理器 import 的那份 JSON。
+    let result = handle_bridge_request(test_context(), "/settings/catalog", json!({})).await;
+    assert_eq!(result, enhancement_settings_catalog_file());
+    assert!(result["items"].as_array().is_some_and(|items| !items.is_empty()));
+}
+
+#[test]
+fn settings_catalog_items_map_to_real_backend_settings() {
+    // 清单里的 key 就是 /settings/set 写入的字段：拼错或字段被删时这里先失败，
+    // 不会等到用户在 Codex 里点了开关才发现没存上。
+    let catalog = enhancement_settings_catalog_file();
+    let defaults = serde_json::to_value(BackendSettings::default()).unwrap();
+    let groups: Vec<&str> = catalog["groups"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|group| group["id"].as_str().unwrap())
+        .collect();
+    let mut keys = std::collections::HashSet::new();
+    for item in catalog["items"].as_array().unwrap() {
+        let key = item["key"].as_str().unwrap();
+        assert!(keys.insert(key), "{key} 在清单里重复");
+        assert!(
+            groups.contains(&item["group"].as_str().unwrap()),
+            "{key} 引用了不存在的分组"
+        );
+        let value = defaults
+            .get(key)
+            .unwrap_or_else(|| panic!("{key} 不是 BackendSettings 字段"));
+        match item["control"].as_str().unwrap() {
+            "bool" => assert!(value.is_boolean(), "{key} 应为布尔字段"),
+            "select" => {
+                let options: Vec<&str> = item["options"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .map(|option| option["value"].as_str().unwrap())
+                    .collect();
+                assert!(
+                    options.contains(&value.as_str().unwrap()),
+                    "{key} 的默认值不在选项里"
+                );
+            }
+            other => panic!("{key} 使用了未知控件类型 {other}"),
+        }
+    }
 }
 
 #[tokio::test]
@@ -304,6 +392,27 @@ async fn settings_get_does_not_expose_stepwise_api_key_to_renderer() {
         result["codexAppStepwiseApiKeyEnv"],
         json!("CODEX_STEPWISE_API_KEY")
     );
+}
+
+#[tokio::test]
+async fn settings_set_notifies_external_settings_change_listener() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    static NOTIFIED: AtomicUsize = AtomicUsize::new(0);
+    codex_plus_core::settings::set_external_settings_change_listener(|| {
+        NOTIFIED.fetch_add(1, Ordering::SeqCst);
+    });
+    let before = NOTIFIED.load(Ordering::SeqCst);
+
+    let result = handle_bridge_request(
+        test_context(),
+        "/settings/set",
+        json!({"providerSyncEnabled": true}),
+    )
+    .await;
+
+    assert_eq!(result["providerSyncEnabled"], json!(true));
+    // 同进程其它用例也可能写设置，只断言至少通知了一次。
+    assert!(NOTIFIED.load(Ordering::SeqCst) > before, "Codex 写入设置后应通知管理器");
 }
 
 #[tokio::test]
@@ -436,15 +545,17 @@ async fn settings_routes_use_settings_service() {
     let updated = handle_bridge_request(
         ctx.clone(),
         "/settings/set",
-        json!({"providerSyncEnabled": true, "codexAppSessionDelete": false, "codexAppServiceTierControls": true, "codexAppPetRealMouseLook": true}),
+        json!({"providerSyncEnabled": true, "codexAppSessionDelete": false, "codexAppNativeFastUnlock": true, "codexAppPetRealMouseLook": true, "codexAppActivityOverlayRight": true}),
     )
     .await;
     let loaded = handle_bridge_request(ctx, "/settings/get", json!({})).await;
 
     assert_eq!(updated["providerSyncEnabled"], true);
     assert_eq!(updated["codexAppSessionDelete"], false);
-    assert_eq!(updated["codexAppServiceTierControls"], true);
+    assert_eq!(updated["codexAppNativeFastUnlock"], true);
+    assert!(updated.get("codexAppServiceTierControls").is_none());
     assert_eq!(updated["codexAppPetRealMouseLook"], true);
+    assert_eq!(updated["codexAppActivityOverlayRight"], true);
     assert_eq!(loaded, updated);
 }
 
@@ -1120,6 +1231,7 @@ async fn launch_lifecycle_uses_hook_supplied_bridge_context_for_injection() {
             debug_port: 9229,
             helper_port: 57321,
             status_store: StatusStore::new(temp.path().join("latest-status.json")),
+            ..Default::default()
         },
         &hooks,
     )
@@ -1148,7 +1260,7 @@ fn test_context() -> BridgeContext {
 struct FakeSettings {
     settings: Mutex<BackendSettings>,
     codex_app_version: Mutex<String>,
-    whale_ledger_dir: tempfile::TempDir,
+    agent_pet_cache: tempfile::TempDir,
 }
 
 impl Default for FakeSettings {
@@ -1156,7 +1268,7 @@ impl Default for FakeSettings {
         Self {
             settings: Mutex::new(BackendSettings::default()),
             codex_app_version: Mutex::new(String::new()),
-            whale_ledger_dir: tempfile::TempDir::new().unwrap(),
+            agent_pet_cache: tempfile::TempDir::new().unwrap(),
         }
     }
 }
@@ -1166,7 +1278,7 @@ impl FakeSettings {
         Self {
             settings: Mutex::new(settings),
             codex_app_version: Mutex::new(String::new()),
-            whale_ledger_dir: tempfile::TempDir::new().unwrap(),
+            agent_pet_cache: tempfile::TempDir::new().unwrap(),
         }
     }
 
@@ -1174,15 +1286,15 @@ impl FakeSettings {
         Self {
             settings: Mutex::new(BackendSettings::default()),
             codex_app_version: Mutex::new(version.to_string()),
-            whale_ledger_dir: tempfile::TempDir::new().unwrap(),
+            agent_pet_cache: tempfile::TempDir::new().unwrap(),
         }
     }
 }
 
 #[async_trait]
 impl BridgeSettingsService for FakeSettings {
-    fn whale_ledger_path(&self) -> std::path::PathBuf {
-        self.whale_ledger_dir.path().join("whale.sqlite3")
+    fn agent_pet_cache_dir(&self) -> std::path::PathBuf {
+        self.agent_pet_cache.path().join("agent-pet-cache")
     }
     async fn get_settings(&self) -> anyhow::Result<BackendSettings> {
         Ok(self.settings.lock().unwrap().clone())
@@ -1207,9 +1319,9 @@ impl BridgeSettingsService for FakeSettings {
             "codexAppConversationView",
             "codexAppThreadScrollRestore",
             "codexAppNativeMenuPlacement",
-            "codexAppServiceTierControls",
+            "codexAppNativeFastUnlock",
             "codexAppPetRealMouseLook",
-            "codexAppWhaleWidgetEnabled",
+            "codexAppActivityOverlayRight",
         ] {
             if let Some(value) = payload.get(key).and_then(Value::as_bool) {
                 raw.insert(key.to_string(), json!(value));
@@ -1334,13 +1446,6 @@ impl Default for FakeData {
 
 #[async_trait]
 impl BridgeDataService for FakeData {
-    async fn whale_history(&self, _payload: Value) -> anyhow::Result<Value> {
-        Ok(json!({"status":"ok","complete":true,"models":[],"days":[],"records":[]}))
-    }
-    async fn whale_session(&self, session: SessionRef) -> anyhow::Result<Value> {
-        Ok(json!({"status": "ok", "sessionId": session.session_id}))
-    }
-
     async fn delete(&self, session: SessionRef) -> anyhow::Result<DeleteResult> {
         Ok(DeleteResult {
             status: DeleteStatus::LocalDeleted,
@@ -1369,6 +1474,25 @@ impl BridgeDataService for FakeData {
             filename: Some("First.md".to_string()),
             markdown: Some("# First\n".to_string()),
         })
+    }
+
+    async fn thread_usage_live(&self, session: SessionRef) -> anyhow::Result<Value> {
+        Ok(json!({
+            "status": "ok",
+            "session_id": session.session_id,
+            "events": [
+                {
+                    "t": "2026-06-02T05:00:00Z",
+                    "input_tokens": 1200,
+                    "cached_input_tokens": 900,
+                    "output_tokens": 120,
+                    "reasoning_output_tokens": 40,
+                    "total_tokens": 1320,
+                    "context_window": 258400,
+                    "turn_output_tokens": 120
+                }
+            ]
+        }))
     }
 
     async fn thread_usage_history(&self, session: SessionRef) -> anyhow::Result<Value> {
@@ -1462,6 +1586,7 @@ impl LaunchHooks for ContextHooks {
         _debug_port: u16,
         _settings: &BackendSettings,
         _extra_args: &[String],
+        _instance: &codex_plus_core::launcher::LaunchInstance,
     ) -> anyhow::Result<CodexLaunch> {
         Ok(CodexLaunch::Process {
             command: vec!["codex".to_string()],
