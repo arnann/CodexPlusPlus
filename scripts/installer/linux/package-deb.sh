@@ -8,6 +8,8 @@ PACKAGE_NAME=codex-plus-plus
 OUT="$ROOT/dist/linux"
 BINARY_DIR=${BINARY_DIR:-$ROOT/target/release}
 STAGE=$(mktemp -d "${TMPDIR:-/tmp}/codex-plus-plus-deb.XXXXXX")
+# mktemp 默认 0700；包内根目录须可遍历。
+chmod 0755 "$STAGE"
 
 test -n "$VERSION"
 test -x "$BINARY_DIR/codex-plus-plus"
@@ -76,7 +78,6 @@ Categories=Development;Utility;
 StartupNotify=true
 MimeType=x-scheme-handler/codexplusplus;x-scheme-handler/dreamskin;
 EOF
-
 
 mkdir -p "$OUT"
 dpkg-deb --build --root-owner-group "$STAGE" "$OUT/${PACKAGE_NAME}_${VERSION}_${ARCH}.deb"

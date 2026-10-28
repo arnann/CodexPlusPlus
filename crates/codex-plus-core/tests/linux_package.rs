@@ -42,6 +42,12 @@ fn deepin_package_contains_one_gui_with_legacy_command_aliases() {
         String::from_utf8_lossy(&output.stderr)
     );
     let deb = root.join("dist/linux/codex-plus-plus_2.0.0+deepin.test_amd64.deb");
+    let listing = Command::new("dpkg-deb")
+        .arg("-c")
+        .arg(&deb)
+        .output()
+        .unwrap();
+    assert!(String::from_utf8_lossy(&listing.stdout).starts_with("drwxr-xr-x root/root"));
     let extracted = root.join("extracted");
     assert!(
         Command::new("dpkg-deb")
