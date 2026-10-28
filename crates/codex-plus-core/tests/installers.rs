@@ -90,54 +90,17 @@ fn installer_name_helpers_and_legacy_constants_keep_api_compatibility() {
 }
 
 #[test]
-fn windows_workflows_verify_nsis_and_support_both_program_files_directories() {
-    for workflow in ["pr-build.yml", "release-assets.yml"] {
-        let text = std::fs::read_to_string(format!("../../.github/workflows/{workflow}"))
-            .unwrap()
-            .replace("\r\n", "\n");
-        let install = text
-            .split_once("      - name: Install NSIS\n")
-            .unwrap()
-            .1
-            .split("      - name:")
-            .next()
-            .unwrap();
-        let build = text
-            .split_once("      - name: Build Windows installer\n")
-            .unwrap()
-            .1
-            .split("      - name:")
-            .next()
-            .unwrap();
-        for step in [install, build] {
-            assert!(step.contains("shell: pwsh"), "{workflow}");
-            assert!(
-                step.contains(r"${env:ProgramFiles(x86)}\NSIS\makensis.exe"),
-                "{workflow}"
-            );
-            assert!(
-                step.contains(r"$env:ProgramFiles\NSIS\makensis.exe"),
-                "{workflow}"
-            );
-            assert!(step.contains("Get-Command makensis.exe"), "{workflow}");
-            assert!(
-                step.contains("Test-Path -LiteralPath $_ -PathType Leaf"),
-                "{workflow}"
-            );
-            assert!(step.contains("if (-not $makensis) {"), "{workflow}");
-        }
-        assert!(install.contains("& $makensis /VERSION"), "{workflow}");
-        assert!(
-            install.contains("if ($LASTEXITCODE -eq 0) { break }"),
-            "{workflow}"
-        );
-        assert!(install.contains("$attempt -le 3"), "{workflow}");
-        assert!(
-            build.contains("if ($LASTEXITCODE -ne 0) { throw"),
-            "{workflow}"
-        );
-        assert!(build.contains("} finally {"), "{workflow}");
-    }
+fn fork_workflow_only_builds_deepin_debian_amd64_packages() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let workflow = std::fs::read_to_string(root.join(".github/workflows/linux-deb.yml"))
+        .expect("read Deepin workflow");
+    assert!(workflow.contains("image: debian:bookworm"));
+    assert!(workflow.contains("package-deb.sh \"$VERSION\" amd64"));
+    assert!(workflow.contains("codex-plus-plus-deepin-amd64-deb"));
+    assert!(!workflow.contains("windows-latest"));
+    assert!(!workflow.contains("macos-latest"));
+    assert!(!root.join(".github/workflows/pr-build.yml").exists());
+    assert!(!root.join(".github/workflows/release-assets.yml").exists());
 }
 
 #[test]

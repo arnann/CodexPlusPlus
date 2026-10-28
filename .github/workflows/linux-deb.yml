@@ -75,7 +75,7 @@ jobs:
         run: |
           cargo test -p codex-plus-core --test launcher app_paths_ -- --test-threads=1
           cargo test -p codex-plus-core --test watcher linux_codex_process_scan
-          cargo test -p codex-plus-core --test linux_package
+          cargo test -p codex-plus-core --test linux_package --test installers
 
       - name: Build release binaries
         run: cargo build --release -p codex-plus-manager --bin codex-plus-plus
